@@ -18,7 +18,7 @@ st.set_page_config(
 )
 
 st.title("⚾ 야구 타구 데이터 분석실")
-st.caption("메이저리그 타구 데이터를 활용한 선수별 타격 능력 분석")
+st.caption("야구 타구 데이터를 활용한 선수별 타격 능력 분석")
 
 DATA_URL = (
     "https://raw.githubusercontent.com/"
@@ -27,12 +27,13 @@ DATA_URL = (
 
 NAME_COL = "last_name, first_name"
 
-# 새롭게 변경한 주요 분석 항목 4개
+# 주요 분석 항목 5개
 MAIN_COLS = [
     "brl_percent",
     "fbld",
     "ev95percent",
-    "avg_distance"
+    "avg_distance",
+    "avg_hit_angle"
 ]
 
 # --------------------------------------------------
@@ -48,7 +49,7 @@ KOREAN_NAMES = {
     "max_hit_speed": "최고 타구 속도",
     "avg_hit_speed": "평균 타구 속도",
     "ev50": "타구 속도 중앙값",
-    "fbld": "플라이볼·라인드라이브 비율",
+    "fbld": "FB/LD 비율",
     "gb": "땅볼 비율",
     "max_distance": "최대 타구 비거리",
     "avg_distance": "평균 타구 비거리",
@@ -71,17 +72,19 @@ def korean_name(column):
 
 @st.cache_data(ttl=3600)
 def load_data():
-    response = requests.get(DATA_URL, timeout=20)
+    response = requests.get(DATA_URL, timeout=30)
     response.raise_for_status()
 
     df = pd.read_csv(BytesIO(response.content))
-
     df.columns = df.columns.str.strip()
 
     # 숫자형 데이터 변환
     for col in df.columns:
         if col != NAME_COL:
-            converted = pd.to_numeric(df[col], errors="coerce")
+            converted = pd.to_numeric(
+                df[col],
+                errors="coerce"
+            )
 
             if converted.notna().any():
                 df[col] = converted
@@ -91,8 +94,9 @@ def load_data():
 
 try:
     df = load_data()
+
 except Exception as e:
-    st.error(f"데이터를 불러오는 중 오류가 발생했습니다: {e}")
+    st.error(f"데이터를 불러오지 못했습니다: {e}")
     st.stop()
 
 
@@ -104,18 +108,32 @@ if NAME_COL not in df.columns:
     st.error("선수 이름 열을 찾을 수 없습니다.")
     st.stop()
 
-missing_cols = [col for col in MAIN_COLS if col not in df.columns]
+missing_cols = [
+    col for col in MAIN_COLS
+    if col not in df.columns
+]
 
 if missing_cols:
-    st.error(f"분석에 필요한 열이 없습니다: {missing_cols}")
+    st.error(
+        f"분석에 필요한 열이 없습니다: {missing_cols}"
+    )
+    st.write("실제 CSV 열 이름:")
+    st.write(df.columns.tolist())
     st.stop()
 
-numeric_df = df.select_dtypes(include="number").copy()
-numeric_df = numeric_df.replace([np.inf, -np.inf], np.nan)
+
+numeric_df = df.select_dtypes(
+    include="number"
+).copy()
+
+numeric_df = numeric_df.replace(
+    [np.inf, -np.inf],
+    np.nan
+)
 
 st.success(
     f"데이터 불러오기 완료! "
-    f"총 {len(df):,}명의 데이터와 {len(df.columns)}개 열을 확인했습니다."
+    f"총 {len(df):,}개 행, {len(df.columns)}개 열"
 )
 
 
@@ -139,27 +157,34 @@ st.dataframe(
 
 st.download_button(
     label="전체 데이터 CSV 다운로드",
-    data=df.to_csv(index=False).encode("utf-8-sig"),
+    data=df.to_csv(
+        index=False
+    ).encode("utf-8-sig"),
     file_name="baseball_data.csv",
     mime="text/csv"
 )
 
 
 # --------------------------------------------------
-# 6. 주요 분석 항목 4개
+# 6. 주요 분석 항목 5개
 # --------------------------------------------------
 
 st.header("2. 주요 타격 지표 분석")
 
 st.write(
     "배럴 타구 비율, FB/LD 비율, "
-    "95마일 이상 타구 비율, 평균 타구 비거리를 분석합니다."
+    "95마일 이상 타구 비율, 평균 타구 비거리, "
+    "평균 발사각을 분석합니다."
 )
 
-metric_cols = st.columns(4)
+metric_cols = st.columns(5)
 
 for i, col in enumerate(MAIN_COLS):
-    values = pd.to_numeric(df[col], errors="coerce").dropna()
+
+    values = pd.to_numeric(
+        df[col],
+        errors="coerce"
+    ).dropna()
 
     if len(values) > 0:
         metric_cols[i].metric(
@@ -174,7 +199,7 @@ for i, col in enumerate(MAIN_COLS):
 
 
 # --------------------------------------------------
-# 7. 주요 항목 통계 요약
+# 7. 통계 요약
 # --------------------------------------------------
 
 st.subheader("주요 지표 통계 요약")
@@ -182,7 +207,8 @@ st.subheader("주요 지표 통계 요약")
 summary = numeric_df[MAIN_COLS].describe().T
 
 summary.index = [
-    korean_name(col) for col in summary.index
+    korean_name(col)
+    for col in summary.index
 ]
 
 summary = summary.rename(
@@ -216,20 +242,17 @@ selected_metric = st.selectbox(
     format_func=korean_name
 )
 
-hist_data = df[[selected_metric]].copy()
-hist_data[selected_metric] = pd.to_numeric(
-    hist_data[selected_metric],
+hist_data = pd.to_numeric(
+    df[selected_metric],
     errors="coerce"
-)
-hist_data = hist_data.dropna()
+).dropna()
 
 fig_hist = px.histogram(
-    hist_data,
-    x=selected_metric,
+    x=hist_data,
     nbins=30,
     title=f"{korean_name(selected_metric)} 분포",
     labels={
-        selected_metric: korean_name(selected_metric),
+        "x": korean_name(selected_metric),
         "count": "선수 수"
     }
 )
@@ -239,7 +262,10 @@ fig_hist.update_layout(
     yaxis_title="선수 수"
 )
 
-st.plotly_chart(fig_hist, use_container_width=True)
+st.plotly_chart(
+    fig_hist,
+    use_container_width=True
+)
 
 
 # --------------------------------------------------
@@ -262,7 +288,9 @@ rank_count = st.slider(
     value=10
 )
 
-rank_df = df[[NAME_COL, rank_metric]].copy()
+rank_df = df[
+    [NAME_COL, rank_metric]
+].copy()
 
 rank_df[rank_metric] = pd.to_numeric(
     rank_df[rank_metric],
@@ -300,11 +328,14 @@ fig_rank = px.bar(
     text_auto=".2f"
 )
 
-st.plotly_chart(fig_rank, use_container_width=True)
+st.plotly_chart(
+    fig_rank,
+    use_container_width=True
+)
 
 
 # --------------------------------------------------
-# 10. 전체 숫자형 열 상관관계 분석
+# 10. 전체 숫자형 데이터 상관관계 분석
 # --------------------------------------------------
 
 st.header("5. 전체 숫자형 데이터 상관관계 분석")
@@ -314,7 +345,10 @@ st.write(
     "피어슨 상관계수를 계산합니다."
 )
 
-corr_df = numeric_df.dropna(axis=1, how="all")
+corr_df = numeric_df.dropna(
+    axis=1,
+    how="all"
+)
 
 # 값이 모두 같은 열 제거
 corr_df = corr_df.loc[
@@ -324,7 +358,9 @@ corr_df = corr_df.loc[
 
 if corr_df.shape[1] >= 2:
 
-    corr_matrix = corr_df.corr(method="pearson")
+    corr_matrix = corr_df.corr(
+        method="pearson"
+    )
 
     korean_corr = corr_matrix.rename(
         index=korean_name,
@@ -368,6 +404,7 @@ if corr_df.shape[1] >= 2:
         pair_rows = []
 
         for (col1, col2), abs_value in corr_pairs.items():
+
             pair_rows.append({
                 "항목 1": korean_name(col1),
                 "항목 2": korean_name(col2),
@@ -394,16 +431,20 @@ if corr_df.shape[1] >= 2:
         )
 
 else:
-    st.warning("상관관계를 계산할 숫자형 열이 부족합니다.")
+    st.warning(
+        "상관관계를 계산할 숫자형 열이 부족합니다."
+    )
 
 
 # --------------------------------------------------
-# 11. 주요 4개 항목 상관관계
+# 11. 주요 5개 항목 상관관계
 # --------------------------------------------------
 
-st.header("6. 주요 4개 지표 상관관계")
+st.header("6. 주요 5개 지표 상관관계")
 
-main_corr = numeric_df[MAIN_COLS].corr(method="pearson")
+main_corr = numeric_df[MAIN_COLS].corr(
+    method="pearson"
+)
 
 main_corr = main_corr.rename(
     index=korean_name,
@@ -417,7 +458,7 @@ fig_main_corr = px.imshow(
     color_continuous_scale="RdBu_r",
     zmin=-1,
     zmax=1,
-    title="주요 4개 지표 상관관계 히트맵"
+    title="주요 5개 지표 상관관계 히트맵"
 )
 
 st.plotly_chart(
@@ -435,6 +476,7 @@ st.header("7. 두 지표 사이의 관계 분석")
 col1, col2 = st.columns(2)
 
 with col1:
+
     x_col = st.selectbox(
         "독립변수(X축)",
         MAIN_COLS,
@@ -443,6 +485,7 @@ with col1:
     )
 
 with col2:
+
     y_col = st.selectbox(
         "종속변수(Y축)",
         MAIN_COLS,
@@ -450,8 +493,12 @@ with col2:
         format_func=korean_name
     )
 
+
 if x_col == y_col:
-    st.warning("서로 다른 항목을 선택해 주세요.")
+
+    st.warning(
+        "서로 다른 항목을 선택해 주세요."
+    )
 
 else:
 
@@ -564,14 +611,13 @@ else:
 
         result3.metric(
             "분석 데이터 수",
-            f"{len(scatter_df):,}명"
+            f"{len(scatter_df):,}개"
         )
 
         st.subheader("선형 회귀 분석 결과")
 
         st.write(
-            f"회귀식: "
-            f"y = {slope:.4f}x + {intercept:.4f}"
+            f"회귀식: y = {slope:.4f}x + {intercept:.4f}"
         )
 
         st.write(
@@ -579,40 +625,45 @@ else:
         )
 
         st.write(
-            f"결정계수: {r_squared:.3f}"
+            f"결정계수 R²: {r_squared:.3f}"
             if not np.isnan(r_squared)
             else "결정계수를 계산할 수 없습니다."
         )
 
         if correlation > 0:
+
             st.info(
                 "두 항목은 양의 상관관계를 보입니다. "
                 "한 항목이 증가할 때 다른 항목도 증가하는 경향이 있습니다."
             )
+
         elif correlation < 0:
+
             st.info(
                 "두 항목은 음의 상관관계를 보입니다. "
                 "한 항목이 증가할 때 다른 항목은 감소하는 경향이 있습니다."
             )
+
         else:
+
             st.info(
                 "두 항목 사이에 선형 상관관계가 거의 나타나지 않습니다."
             )
 
         st.caption(
-            "주의: 상관관계가 높다고 해서 한 항목이 다른 항목의 "
-            "원인이라는 뜻은 아닙니다. 회귀분석은 두 변수 사이의 "
-            "선형적인 관계를 설명하는 방법입니다."
+            "주의: 상관관계가 높다고 해서 한 항목이 "
+            "다른 항목의 원인이라는 뜻은 아닙니다."
         )
 
     else:
+
         st.warning(
             "분석에 사용할 수 있는 데이터가 충분하지 않습니다."
         )
 
 
 # --------------------------------------------------
-# 13. 데이터 분석 안내
+# 13. 분석 지표 설명
 # --------------------------------------------------
 
 st.header("8. 분석 지표 설명")
@@ -622,18 +673,28 @@ explanations = {
         "배럴 타구가 전체 타구에서 차지하는 비율입니다. "
         "배럴은 타구 속도와 발사각이 조합된 질 좋은 타구를 의미합니다."
     ),
+
     "FB/LD 비율": (
         "플라이볼과 라인드라이브 타구의 비율을 나타내는 지표입니다."
     ),
+
     "95마일 이상 타구 비율": (
         "타구 속도가 시속 95마일 이상인 타구가 차지하는 비율입니다."
     ),
+
     "평균 타구 비거리": (
-        "타구가 날아간 거리의 평균값입니다. 원본 데이터의 단위는 피트입니다."
+        "타구가 날아간 거리의 평균값입니다. "
+        "원본 데이터의 단위는 피트입니다."
+    ),
+
+    "평균 발사각": (
+        "타구가 배트에 맞은 뒤 날아가는 각도의 평균값입니다. "
+        "일반적으로 도(°) 단위로 표시됩니다."
     )
 }
 
 for name, explanation in explanations.items():
+
     st.markdown(f"**{name}**")
     st.write(explanation)
 
@@ -645,11 +706,14 @@ for name, explanation in explanations.items():
 st.divider()
 
 st.caption(
-    "데이터 출처: GitHub exit_velocity.csv | "
+    "데이터 출처: GitHub exit_velocity.csv"
+)
+
+st.caption(
     "분석 방법: 기술통계, 피어슨 상관분석, 선형 회귀분석"
 )
 
 st.caption(
-    "본 앱은 데이터 분석 학습을 위한 도구이며, "
+    "본 앱은 데이터 분석 학습을 위한 도구입니다. "
     "상관관계가 인과관계를 의미하지는 않습니다."
 )
