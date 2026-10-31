@@ -227,7 +227,6 @@ st.caption(
     "전체 선수 데이터의 brl_percent 산술평균입니다."
 )
 
-            )
 
     # 기술통계
     st.subheader("3. 주요 지표 기술통계")
