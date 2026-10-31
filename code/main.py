@@ -4,548 +4,289 @@ import pandas as pd
 import numpy as np
 import requests
 import plotly.express as px
-from io import BytesIO
+import plotly.graph_objects as go
 
-# -----------------------------------
-# 1. 페이지 설정
-# -----------------------------------
 st.set_page_config(
-    page_title="야구 타구 데이터 분석실",
+    page_title="야구 타구 데이터 분석",
     page_icon="⚾",
     layout="wide"
 )
 
-DATA_URL = (
-    "https://raw.githubusercontent.com/"
-    "leeseojin09/baseball/refs/heads/main/"
-    "data/exit_velocity.csv"
-)
+st.title("⚾ 야구 타구 데이터 분석")
+st.caption("타구 속도, 발사각, 비거리, 배럴 비율 분석")
 
-# 사용할 열 5개
-TARGET_COLS = [
-    "last_name, first_name",
-    "avg_hit_angle",
-    "avg_hit_speed",
-    "avg_distance",
-    "brl_percent"
-]
+DATA_URL = "https://raw.githubusercontent.com/leeseojin09/baseball/refs/heads/main/data/exit_velocity.csv"
 
-# 숫자형 변수
-NUMERIC_COLS = [
-    "avg_hit_angle",
-    "avg_hit_speed",
-    "avg_distance",
-    "brl_percent"
-]
-
-# 한글 변수명
-KOREAN_NAMES = {
-    "last_name, first_name": "선수 이름",
-    "avg_hit_angle": "평균 발사각",
-    "avg_hit_speed": "평균 타구 속도",
-    "avg_distance": "평균 비거리",
-    "brl_percent": "배럴 비율"
-}
-
-
-# -----------------------------------
-# 2. 제목
-# -----------------------------------
-st.title("⚾ 야구 타구 데이터 분석실")
-
-st.caption(
-    "선수 이름과 4가지 타구 기록을 이용한 "
-    "기초 통계 및 데이터 시각화 분석"
-)
-
-
-# -----------------------------------
-# 3. 데이터 불러오기
-# -----------------------------------
-@st.cache_data(ttl=3600)
+@st.cache_data
 def load_data():
-
-    response = requests.get(DATA_URL, timeout=30)
+    response = requests.get(DATA_URL, timeout=20)
     response.raise_for_status()
 
-    df = pd.read_csv(
-        BytesIO(response.content),
-        encoding="utf-8-sig"
-    )
+    from io import BytesIO
+    data = pd.read_csv(BytesIO(response.content))
 
-    df.columns = df.columns.astype(str).str.strip()
+    # 선수 이름 열 확인
+    if "last_name, first_name" in data.columns:
+        data["last_name, first_name"] = (
+            data["last_name, first_name"].fillna("이름 없음")
+        )
 
-    # 필요한 열 확인
-    missing_cols = [
-        col for col in TARGET_COLS
-        if col not in df.columns
+    # 수치형 열 변환
+    numeric_cols = [
+        "avg_hit_angle",
+        "avg_hit_speed",
+        "avg_distance",
+        "brl_percent"
     ]
 
-    if missing_cols:
-        raise ValueError(
-            f"CSV에 필요한 열이 없습니다: {missing_cols}"
-        )
+    for col in numeric_cols:
+        if col in data.columns:
+            data[col] = pd.to_numeric(data[col], errors="coerce")
 
-    # 지정한 5개 열만 남기기
-    df = df[TARGET_COLS].copy()
-
-    # 선수 이름 정리
-    df["last_name, first_name"] = (
-        df["last_name, first_name"]
-        .fillna("이름 없음")
-        .astype(str)
-        .str.strip()
-    )
-
-    # 숫자형 변수 변환
-    for col in NUMERIC_COLS:
-        df[col] = pd.to_numeric(
-            df[col],
-            errors="coerce"
-        )
-
-    return df
+    return data
 
 
 try:
     df = load_data()
-
 except Exception as e:
-    st.error("데이터를 불러오지 못했습니다.")
-    st.write("오류 종류:", type(e).__name__)
-    st.code(str(e))
+    st.error(f"데이터를 불러오지 못했습니다: {e}")
     st.stop()
 
 
-# -----------------------------------
-# 4. 데이터 개요
-# -----------------------------------
-st.subheader("1. 데이터 개요")
+# ---------------------------------
+# 원본 데이터 전체 보기
+# ---------------------------------
+st.header("📋 기존 데이터 전체 보기")
+
+st.write(
+    f"전체 데이터: {len(df):,}행 × {len(df.columns)}열"
+)
+
+with st.expander("원본 데이터 확인하기", expanded=True):
+    st.dataframe(
+        df,
+        use_container_width=True,
+        height=500
+    )
+
+    st.download_button(
+        "📥 원본 데이터 전체 다운로드",
+        data=df.to_csv(index=False).encode("utf-8-sig"),
+        file_name="exit_velocity_original.csv",
+        mime="text/csv"
+    )
+
+st.divider()
+
+
+# ---------------------------------
+# 분석에 사용할 데이터
+# ---------------------------------
+st.header("📊 타구 데이터 분석")
+
+numeric_cols = [
+    "avg_hit_angle",
+    "avg_hit_speed",
+    "avg_distance",
+    "brl_percent"
+]
+
+available_cols = [col for col in numeric_cols if col in df.columns]
+
+if not available_cols:
+    st.error("분석할 수치형 데이터가 없습니다.")
+    st.stop()
+
+analysis_df = df.dropna(subset=available_cols).copy()
+
+# ---------------------------------
+# 데이터 요약
+# ---------------------------------
+st.subheader("1. 데이터 기본 정보")
 
 col1, col2, col3 = st.columns(3)
 
-with col1:
-    st.metric("전체 선수 데이터", f"{len(df):,}개")
+col1.metric("전체 선수 데이터", f"{len(df):,}개")
+col2.metric("분석 가능한 데이터", f"{len(analysis_df):,}개")
+col3.metric("분석 항목", f"{len(available_cols)}개")
 
-with col2:
-    st.metric("분석 변수 수", "5개")
-
-with col3:
-    st.metric(
-        "결측값 수",
-        f"{int(df.isna().sum().sum()):,}개"
-    )
-
-st.write("### 분석 데이터 미리 보기")
-
+st.subheader("기초 통계량")
 st.dataframe(
-    df.head(10),
-    use_container_width=True
-)
-
-st.write("### 최종 분석 변수")
-
-for col in TARGET_COLS:
-    st.write(f"- {col} : {KOREAN_NAMES[col]}")
-
-
-# -----------------------------------
-# 5. 기초 통계량
-# -----------------------------------
-st.subheader("2. 기초 통계량")
-
-stats = df[NUMERIC_COLS].describe().T
-
-stats = stats.rename(columns={
-    "count": "개수",
-    "mean": "평균",
-    "std": "표준편차",
-    "min": "최솟값",
-    "25%": "1사분위수",
-    "50%": "중앙값",
-    "75%": "3사분위수",
-    "max": "최댓값"
-})
-
-stats.index = [
-    KOREAN_NAMES[col]
-    for col in stats.index
-]
-
-st.dataframe(
-    stats.round(3),
+    analysis_df[available_cols].describe().round(2),
     use_container_width=True
 )
 
 
-# -----------------------------------
-# 6. 히스토그램
-# -----------------------------------
-st.subheader("3. 변수별 데이터 분포")
+# ---------------------------------
+# 선수 이름 포함 분석 데이터
+# ---------------------------------
+name_col = "last_name, first_name"
 
-hist_col = st.selectbox(
-    "분포를 확인할 변수 선택",
-    options=NUMERIC_COLS,
-    format_func=lambda x: KOREAN_NAMES[x]
-)
-
-hist_data = df[[hist_col]].dropna()
-
-if not hist_data.empty:
-
-    fig = px.histogram(
-        hist_data,
-        x=hist_col,
-        nbins=20,
-        title=f"{KOREAN_NAMES[hist_col]} 분포",
-        labels={
-            hist_col: KOREAN_NAMES[hist_col],
-            "count": "데이터 개수"
-        },
-        opacity=0.8
-    )
-
-    fig.update_layout(
-        xaxis_title=KOREAN_NAMES[hist_col],
-        yaxis_title="데이터 개수",
-        bargap=0.08
-    )
-
-    st.plotly_chart(
-        fig,
-        use_container_width=True
-    )
-
-    st.write(
-        f"평균: {hist_data[hist_col].mean():.3f}"
-    )
-
-    st.write(
-        f"중앙값: {hist_data[hist_col].median():.3f}"
-    )
-
+if name_col in analysis_df.columns:
+    display_cols = [name_col] + available_cols
 else:
-    st.warning("분석할 데이터가 없습니다.")
+    display_cols = available_cols
 
+st.subheader("2. 선수별 데이터")
 
-# -----------------------------------
-# 7. 상자그림
-# -----------------------------------
-st.subheader("4. 변수별 이상값 분석")
-
-box_df = df.melt(
-    id_vars=["last_name, first_name"],
-    value_vars=NUMERIC_COLS,
-    var_name="변수",
-    value_name="값"
-).dropna()
-
-box_df["변수명"] = box_df["변수"].map(
-    KOREAN_NAMES
-)
-
-fig = px.box(
-    box_df,
-    x="변수명",
-    y="값",
-    color="변수명",
-    points="outliers",
-    hover_data=["last_name, first_name"],
-    title="4개 변수의 상자그림 비교"
-)
-
-fig.update_layout(
-    showlegend=False,
-    xaxis_title="분석 변수",
-    yaxis_title="측정값"
-)
-
-st.plotly_chart(
-    fig,
+st.dataframe(
+    analysis_df[display_cols],
     use_container_width=True
 )
 
-st.caption(
-    "상자그림의 점은 일반적인 기준에서 벗어난 이상값 후보입니다."
+
+# ---------------------------------
+# 히스토그램
+# ---------------------------------
+st.subheader("3. 항목별 데이터 분포")
+
+selected_hist = st.selectbox(
+    "분포를 확인할 항목",
+    available_cols
 )
 
+fig_hist = px.histogram(
+    analysis_df,
+    x=selected_hist,
+    nbins=20,
+    title=f"{selected_hist} 분포"
+)
 
-# -----------------------------------
-# 8. 선수별 기록 순위
-# -----------------------------------
-st.subheader("5. 선수별 기록 순위")
+st.plotly_chart(fig_hist, use_container_width=True)
+
+
+# ---------------------------------
+# 선수별 순위
+# ---------------------------------
+st.subheader("4. 선수별 순위")
 
 rank_col = st.selectbox(
-    "순위를 확인할 기록",
-    options=NUMERIC_COLS,
-    format_func=lambda x: KOREAN_NAMES[x]
+    "순위를 확인할 항목",
+    available_cols,
+    key="rank"
 )
 
-rank_order = st.radio(
-    "순위 정렬 방식",
-    ["높은 순", "낮은 순"],
-    horizontal=True
-)
-
-rank_count = st.slider(
-    "표시할 선수 수",
-    min_value=5,
-    max_value=50,
-    value=10,
-    step=5
-)
-
-rank_df = df[
-    ["last_name, first_name", rank_col]
-].dropna().copy()
-
-rank_df = rank_df.sort_values(
+rank_df = analysis_df.sort_values(
     rank_col,
-    ascending=(rank_order == "낮은 순")
-).head(rank_count)
+    ascending=False
+).head(20)
 
-rank_df = rank_df.rename(columns={
-    "last_name, first_name": "선수 이름",
-    rank_col: KOREAN_NAMES[rank_col]
-})
-
-rank_df.insert(
-    0,
-    "순위",
-    range(1, len(rank_df) + 1)
-)
-
-st.dataframe(
-    rank_df.round(3),
-    use_container_width=True,
-    hide_index=True
-)
-
-# 선수별 막대그래프
-if not rank_df.empty:
-
-    fig = px.bar(
-        rank_df.sort_values(
-            KOREAN_NAMES[rank_col],
-            ascending=True
-        ),
-        x=KOREAN_NAMES[rank_col],
-        y="선수 이름",
-        orientation="h",
-        title=f"선수별 {KOREAN_NAMES[rank_col]} 순위"
+if name_col in rank_df.columns:
+    fig_rank = px.bar(
+        rank_df,
+        x=name_col,
+        y=rank_col,
+        title=f"{rank_col} 상위 20명",
+        hover_data=available_cols
+    )
+else:
+    fig_rank = px.bar(
+        rank_df,
+        y=rank_col,
+        title=f"{rank_col} 상위 20명"
     )
 
-    st.plotly_chart(
-        fig,
-        use_container_width=True
-    )
+st.plotly_chart(fig_rank, use_container_width=True)
 
 
-# -----------------------------------
-# 9. 상관관계 분석
-# -----------------------------------
-st.subheader("6. 변수 간 상관관계 분석")
+# ---------------------------------
+# 상관관계 분석
+# ---------------------------------
+st.subheader("5. 항목 간 상관관계")
 
-corr_data = df[NUMERIC_COLS].corr()
+corr = analysis_df[available_cols].corr()
 
-corr_display = corr_data.copy()
-
-corr_display.index = [
-    KOREAN_NAMES[col]
-    for col in corr_display.index
-]
-
-corr_display.columns = [
-    KOREAN_NAMES[col]
-    for col in corr_display.columns
-]
-
-st.write("### 상관계수 행렬")
-
-st.dataframe(
-    corr_display.round(3),
-    use_container_width=True
-)
-
-fig = px.imshow(
-    corr_display,
+fig_corr = px.imshow(
+    corr,
     text_auto=".2f",
+    color_continuous_scale="RdBu_r",
     zmin=-1,
     zmax=1,
-    color_continuous_scale="RdBu_r",
-    aspect="auto",
-    title="변수 간 상관관계 히트맵"
+    title="타구 데이터 상관관계"
 )
 
-fig.update_layout(
-    coloraxis_colorbar_title="상관계수"
-)
-
-st.plotly_chart(
-    fig,
-    use_container_width=True
-)
-
-st.caption(
-    "상관계수는 -1부터 1 사이입니다. "
-    "절댓값이 클수록 선형 관계가 강합니다. "
-    "상관관계만으로 인과관계를 판단할 수는 없습니다."
-)
+st.plotly_chart(fig_corr, use_container_width=True)
 
 
-# -----------------------------------
-# 10. 산점도와 선형 회귀 분석
-# -----------------------------------
-st.subheader("7. 두 변수의 관계 분석")
+# ---------------------------------
+# 산점도 및 회귀분석
+# ---------------------------------
+st.subheader("6. 두 변수의 관계 분석")
 
 col1, col2 = st.columns(2)
 
 with col1:
     x_col = st.selectbox(
-        "X축 변수 선택",
-        options=NUMERIC_COLS,
-        index=1,
-        format_func=lambda x: KOREAN_NAMES[x],
-        key="x_axis"
+        "독립변수 (X)",
+        available_cols,
+        index=available_cols.index("avg_hit_speed")
+        if "avg_hit_speed" in available_cols else 0
     )
 
 with col2:
     y_col = st.selectbox(
-        "Y축 변수 선택",
-        options=NUMERIC_COLS,
-        index=0,
-        format_func=lambda x: KOREAN_NAMES[x],
-        key="y_axis"
+        "종속변수 (Y)",
+        available_cols,
+        index=available_cols.index("avg_distance")
+        if "avg_distance" in available_cols else min(1, len(available_cols)-1)
     )
 
-scatter_df = df[
-    ["last_name, first_name", x_col, y_col]
-].dropna()
+scatter_df = analysis_df.dropna(subset=[x_col, y_col]).copy()
 
-if len(scatter_df) >= 2:
+hover_name = name_col if name_col in scatter_df.columns else None
 
-    fig = px.scatter(
-        scatter_df,
-        x=x_col,
-        y=y_col,
-        hover_name="last_name, first_name",
-        title=(
-            f"{KOREAN_NAMES[x_col]}와 "
-            f"{KOREAN_NAMES[y_col]}의 관계"
-        ),
-        opacity=0.7,
-        labels={
-            x_col: KOREAN_NAMES[x_col],
-            y_col: KOREAN_NAMES[y_col]
-        }
-    )
+fig_scatter = px.scatter(
+    scatter_df,
+    x=x_col,
+    y=y_col,
+    hover_name=hover_name,
+    title=f"{x_col}와 {y_col}의 관계"
+)
 
-    # 선형 회귀 추세선 직접 계산
-    if (
-        x_col != y_col
-        and scatter_df[x_col].nunique() >= 2
-    ):
+# 직접 회귀선 계산
+if len(scatter_df) >= 2 and scatter_df[x_col].nunique() >= 2:
+    x = scatter_df[x_col].to_numpy()
+    y = scatter_df[y_col].to_numpy()
 
-        x = scatter_df[x_col].to_numpy(dtype=float)
-        y = scatter_df[y_col].to_numpy(dtype=float)
+    slope, intercept = np.polyfit(x, y, 1)
 
-        slope, intercept = np.polyfit(
-            x,
-            y,
-            1
-        )
+    x_line = np.linspace(x.min(), x.max(), 100)
+    y_line = slope * x_line + intercept
 
-        x_line = np.linspace(
-            x.min(),
-            x.max(),
-            100
-        )
-
-        y_line = slope * x_line + intercept
-
-        fig.add_scatter(
+    fig_scatter.add_trace(
+        go.Scatter(
             x=x_line,
             y=y_line,
             mode="lines",
-            name="선형 회귀 추세선",
-            line=dict(
-                dash="dash",
-                width=3
-            )
+            name="선형 회귀선"
         )
-
-    st.plotly_chart(
-        fig,
-        use_container_width=True
     )
 
-    if x_col != y_col:
+    r = scatter_df[x_col].corr(scatter_df[y_col])
+    r_squared = r ** 2
 
-        corr_value = scatter_df[x_col].corr(
-            scatter_df[y_col]
-        )
+    st.metric("피어슨 상관계수", f"{r:.3f}")
+    st.metric("결정계수 R²", f"{r_squared:.3f}")
 
-        metric1, metric2 = st.columns(2)
-
-        with metric1:
-            st.metric(
-                "피어슨 상관계수",
-                f"{corr_value:.4f}"
-                if pd.notna(corr_value)
-                else "계산 불가"
-            )
-
-        with metric2:
-            st.metric(
-                "분석 데이터 수",
-                f"{len(scatter_df):,}개"
-            )
-
-        if (
-            scatter_df[x_col].nunique() >= 2
-            and pd.notna(corr_value)
-        ):
-
-            r_squared = corr_value ** 2
-
-            st.write("### 선형 회귀 분석 결과")
-
-            st.write(
-                f"회귀식: y = {slope:.4f}x + {intercept:.4f}"
-            )
-
-            st.write(
-                f"결정계수(R²): {r_squared:.4f}"
-            )
+    st.write(f"회귀식: y = {slope:.3f}x + {intercept:.3f}")
 
 else:
-    st.warning(
-        "산점도를 그리기 위한 데이터가 부족합니다."
-    )
+    st.warning("회귀분석을 수행하기에 데이터가 부족합니다.")
+
+st.plotly_chart(fig_scatter, use_container_width=True)
 
 
-# -----------------------------------
-# 11. 데이터 다운로드
-# -----------------------------------
-st.subheader("8. 분석 데이터 다운로드")
-
-csv_data = df.to_csv(
-    index=False,
-    encoding="utf-8-sig"
-)
+# ---------------------------------
+# 분석 데이터 다운로드
+# ---------------------------------
+st.divider()
+st.subheader("📥 분석 데이터 다운로드")
 
 st.download_button(
-    label="📥 5개 열만 포함된 CSV 다운로드",
-    data=csv_data,
-    file_name="baseball_selected_data.csv",
+    "분석 데이터 CSV 다운로드",
+    data=analysis_df.to_csv(index=False).encode("utf-8-sig"),
+    file_name="exit_velocity_analysis.csv",
     mime="text/csv"
 )
 
-st.success(
-    "선수 이름과 4개 타구 변수를 이용한 분석이 완료되었습니다."
-)
-
-st.caption(
-    "Plotly 그래프는 확대, 축소, 마우스 오버를 통한 "
-    "수치 확인이 가능합니다."
-)
+st.success("데이터 분석이 완료되었습니다!")
