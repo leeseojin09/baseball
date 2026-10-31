@@ -5,24 +5,19 @@ import numpy as np
 import requests
 import plotly.express as px
 import plotly.graph_objects as go
-
 from io import BytesIO
 
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import (
-    mean_squared_error,
-    mean_absolute_error,
-    r2_score
-)
+from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 
 from xgboost import XGBRegressor
 
 
-# =========================================================
-# 1. 기본 설정
-# =========================================================
+# -----------------------------------
+# 기본 설정
+# -----------------------------------
 
 st.set_page_config(
     page_title="야구 데이터 분석실",
@@ -30,11 +25,7 @@ st.set_page_config(
     layout="wide"
 )
 
-DATA_URL = (
-    "https://raw.githubusercontent.com/"
-    "leeseojin09/baseball/refs/heads/main/"
-    "data/exit_velocity.csv"
-)
+DATA_URL = "https://raw.githubusercontent.com/leeseojin09/baseball/refs/heads/main/data/exit_velocity.csv"
 
 NAME_COL = "last_name, first_name"
 
@@ -72,14 +63,26 @@ def korean_name(col):
     return KOREAN_NAMES.get(col, col)
 
 
-# =========================================================
-# 2. 데이터 불러오기
-# =========================================================
+def percent_value(value):
+    """0~1 비율이면 100을 곱하고, 0~100이면 그대로 표시."""
+    if pd.isna(value):
+        return "자료 없음"
+
+    if abs(value) <= 1:
+        value *= 100
+
+    return f"{value:.2f}%"
+
+
+# -----------------------------------
+# 데이터 불러오기
+# -----------------------------------
 
 @st.cache_data
 def load_data():
-    response = requests.get(DATA_URL, timeout=30)
+    response = requests.get(DATA_URL, timeout=20)
     response.raise_for_status()
+
     return pd.read_csv(BytesIO(response.content))
 
 
@@ -90,25 +93,12 @@ except Exception as e:
     st.stop()
 
 
-missing_cols = [
-    col for col in MAIN_COLS
-    if col not in df.columns
-]
+# -----------------------------------
+# 제목 및 사이드바
+# -----------------------------------
 
-if missing_cols:
-    st.error(
-        "CSV에 필요한 열이 없습니다: "
-        + ", ".join(missing_cols)
-    )
-    st.stop()
-
-
-# =========================================================
-# 3. 사이드바 메뉴
-# =========================================================
-
-st.sidebar.title("⚾ 야구 데이터 분석실")
-st.sidebar.caption("메뉴를 선택하여 분석을 진행하세요.")
+st.title("⚾ 야구 데이터 분석실")
+st.caption("타구 데이터를 활용한 배럴 타구 분석 및 머신러닝")
 
 menu = st.sidebar.radio(
     "분석 메뉴",
@@ -120,159 +110,146 @@ menu = st.sidebar.radio(
     ]
 )
 
-st.sidebar.divider()
 
-st.sidebar.write("**분석 모델**")
-st.sidebar.write("• 다중 선형회귀")
-st.sidebar.write("• 랜덤 포레스트")
-st.sidebar.write("• XGBoost")
-
-
-# =========================================================
-# 4. 공통 전처리 데이터
-# =========================================================
-
-numeric_df = df.copy()
-
-for col in numeric_df.columns:
-    converted = pd.to_numeric(
-        numeric_df[col],
-        errors="coerce"
-    )
-
-    if converted.notna().any():
-        numeric_df[col] = converted
-
-
-# =========================================================
-# 메뉴 1. 데이터 탐색
-# =========================================================
+# -----------------------------------
+# 데이터 탐색
+# -----------------------------------
 
 if menu == "데이터 탐색":
 
-    st.title("📊 데이터 탐색")
+    st.header("1. 데이터 탐색")
 
-    st.write(
-        "메이저리그 타격 데이터를 확인하고 "
-        "주요 타격 지표의 통계적 관계를 분석합니다."
+    st.subheader("전체 데이터")
+
+    display_df = df.copy()
+
+    if NAME_COL in display_df.columns:
+        display_df[NAME_COL] = (
+            display_df[NAME_COL]
+            .fillna("")
+            .astype(str)
+            .str.replace(",", " ", regex=False)
+            .str.strip()
+        )
+
+    display_df = display_df.rename(
+        columns={col: korean_name(col) for col in display_df.columns}
     )
-
-    # 데이터 기본 정보
-    c1, c2, c3 = st.columns(3)
-
-    c1.metric("전체 데이터", f"{len(df):,}개")
-    c2.metric("전체 변수", f"{len(df.columns)}개")
-    c3.metric(
-        "숫자형 변수",
-        f"{len(numeric_df.select_dtypes(include=np.number).columns)}개"
-    )
-
-    st.divider()
-
-    # 원본 데이터
-    st.subheader("1. 전체 원본 데이터")
-
-    display_df = df.rename(columns=korean_name)
 
     st.dataframe(
         display_df,
         use_container_width=True,
-        hide_index=True
+        height=400
     )
 
     st.download_button(
-        "📥 원본 데이터 다운로드",
-        data=df.to_csv(index=False).encode("utf-8-sig"),
-        file_name="baseball_data.csv",
-        mime="text/csv"
+        "전체 데이터 CSV 다운로드",
+        df.to_csv(index=False).encode("utf-8-sig"),
+        "baseball_data.csv",
+        "text/csv"
     )
 
     st.divider()
 
-    # 주요 지표
-    
-# 주요 타격 지표
-st.subheader("2. 주요 타격 지표 평균")
+    # 주요 지표 평균
+    st.subheader("2. 주요 타격 지표 평균")
 
-metric_cols = st.columns(5)
+    metric_cols = st.columns(5)
 
-for i, col in enumerate(MAIN_COLS):
-    values = pd.to_numeric(
-        df[col],
-        errors="coerce"
+    for i, col in enumerate(MAIN_COLS):
+
+        if col in df.columns:
+            values = pd.to_numeric(df[col], errors="coerce")
+            value = values.mean()
+
+            with metric_cols[i]:
+                if col in ["brl_percent", "fbld", "ev95percent"]:
+                    st.metric(
+                        korean_name(col),
+                        percent_value(value)
+                    )
+                else:
+                    st.metric(
+                        korean_name(col),
+                        f"{value:.2f}" if pd.notna(value) else "자료 없음"
+                    )
+
+    # 배럴 타구 평균 추가
+    st.subheader("⚾ 배럴 타구 평균")
+
+    barrel_cols = st.columns(2)
+
+    if "barrels" in df.columns:
+
+        barrel_mean = pd.to_numeric(
+            df["barrels"],
+            errors="coerce"
+        ).mean()
+
+        with barrel_cols[0]:
+            st.metric(
+                "평균 배럴 타구 수",
+                f"{barrel_mean:.2f}" if pd.notna(barrel_mean) else "자료 없음"
+            )
+
+    if "brl_percent" in df.columns:
+
+        barrel_percent_mean = pd.to_numeric(
+            df["brl_percent"],
+            errors="coerce"
+        ).mean()
+
+        with barrel_cols[1]:
+            st.metric(
+                "평균 배럴 타구 비율",
+                percent_value(barrel_percent_mean)
+            )
+
+    st.caption(
+        "배럴 타구 수와 배럴 타구 비율은 전체 선수 데이터의 산술평균입니다."
     )
 
-    with metric_cols[i]:
-        value = values.mean()
+    st.divider()
 
-        st.metric(
-            korean_name(col),
-            f"{value:.2f}" if pd.notna(value) else "자료 없음"
+    # 기초 통계
+    st.subheader("3. 기초 통계량")
+
+    numeric_df = df.copy()
+
+    for col in numeric_df.columns:
+        numeric_df[col] = pd.to_numeric(
+            numeric_df[col],
+            errors="coerce"
         )
 
-# 배럴 타구 비율 평균 별도 표시
-barrel_mean = pd.to_numeric(
-    df["brl_percent"],
-    errors="coerce"
-).mean()
-
-st.subheader("⚾ 전체 선수의 평균 배럴 타구 비율")
-
-st.metric(
-    label="평균 배럴 타구 비율",
-    value=f"{barrel_mean:.2f}%" if pd.notna(barrel_mean) else "자료 없음"
-)
-
-st.caption(
-    "전체 선수 데이터의 brl_percent 산술평균입니다."
-)
-
-
-    # 기술통계
-    st.subheader("3. 주요 지표 기술통계")
-
-    stats = numeric_df[MAIN_COLS].describe().T
-
-    stats = stats.rename(
-        index=korean_name,
-        columns={
-            "count": "개수",
-            "mean": "평균",
-            "std": "표준편차",
-            "min": "최솟값",
-            "25%": "1사분위수",
-            "50%": "중앙값",
-            "75%": "3사분위수",
-            "max": "최댓값"
-        }
-    )
+    numeric_df = numeric_df.select_dtypes(include=np.number)
 
     st.dataframe(
-        stats.round(3),
+        numeric_df.describe().T,
         use_container_width=True
     )
 
     st.divider()
 
     # 히스토그램
-    st.subheader("4. 타격 지표 분포")
+    st.subheader("4. 변수별 분포")
 
-    hist_col = st.selectbox(
+    available_cols = [
+        col for col in MAIN_COLS
+        if col in numeric_df.columns
+    ]
+
+    selected_hist = st.selectbox(
         "분포를 확인할 변수",
-        MAIN_COLS,
+        available_cols,
         format_func=korean_name
     )
 
-    hist_data = numeric_df[hist_col].dropna()
-
     fig = px.histogram(
-        x=hist_data,
+        df,
+        x=selected_hist,
         nbins=30,
-        title=f"{korean_name(hist_col)} 분포",
-        labels={
-            "x": korean_name(hist_col),
-            "count": "데이터 수"
-        }
+        title=f"{korean_name(selected_hist)} 분포"
     )
 
     st.plotly_chart(fig, use_container_width=True)
@@ -282,70 +259,147 @@ st.caption(
     # 선수별 순위
     st.subheader("5. 선수별 순위")
 
+    rank_cols = [
+        col for col in [
+            "brl_percent",
+            "barrels",
+            "avg_hit_angle",
+            "avg_distance",
+            "avg_hit_speed"
+        ]
+        if col in df.columns
+    ]
+
     rank_col = st.selectbox(
         "순위를 확인할 지표",
-        MAIN_COLS,
+        rank_cols,
         format_func=korean_name
     )
 
-    rank_count = st.slider(
+    top_n = st.slider(
         "표시할 선수 수",
         5, 30, 10
     )
 
-    rank_df = df[[NAME_COL, rank_col]].copy()
-
-    rank_df[rank_col] = pd.to_numeric(
-        rank_df[rank_col],
+    ranking = df.copy()
+    ranking[rank_col] = pd.to_numeric(
+        ranking[rank_col],
         errors="coerce"
     )
 
-    rank_df = rank_df.dropna(
-        subset=[rank_col]
-    ).sort_values(
+    ranking = ranking.sort_values(
         rank_col,
         ascending=False
-    ).head(rank_count)
+    ).head(top_n)
 
-    rank_df = rank_df.rename(
-        columns={
-            NAME_COL: "선수 이름",
-            rank_col: korean_name(rank_col)
-        }
-    )
+    if NAME_COL in ranking.columns:
+        ranking[NAME_COL] = (
+            ranking[NAME_COL]
+            .fillna("")
+            .astype(str)
+            .str.replace(",", " ", regex=False)
+            .str.strip()
+        )
 
     st.dataframe(
-        rank_df,
-        use_container_width=True,
-        hide_index=True
+        ranking[
+            [NAME_COL, rank_col]
+            if NAME_COL in ranking.columns
+            else [rank_col]
+        ].rename(
+            columns={col: korean_name(col) for col in ranking.columns}
+        ),
+        use_container_width=True
     )
 
     st.divider()
 
-    # 전체 숫자형 변수 상관관계
-    st.subheader("6. 전체 숫자형 변수 상관관계")
+    # 상관관계 분석
+    st.subheader("6. 전체 수치형 변수 상관관계")
 
-    all_numeric = numeric_df.select_dtypes(
-        include=np.number
+    corr = numeric_df.corr()
+
+    fig = px.imshow(
+        corr,
+        text_auto=".2f",
+        color_continuous_scale="RdBu_r",
+        zmin=-1,
+        zmax=1,
+        title="전체 변수 상관관계 히트맵"
     )
 
-    if all_numeric.shape[1] >= 2:
+    st.plotly_chart(fig, use_container_width=True)
 
-        corr = all_numeric.corr()
+    st.divider()
 
-        corr_display = corr.rename(
-            index=korean_name,
-            columns=korean_name
+    st.subheader("7. 주요 변수 상관관계")
+
+    selected_main = [
+        col for col in MAIN_COLS
+        if col in numeric_df.columns
+    ]
+
+    main_corr = numeric_df[selected_main].corr()
+
+    fig = px.imshow(
+        main_corr,
+        text_auto=".2f",
+        color_continuous_scale="RdBu_r",
+        zmin=-1,
+        zmax=1,
+        title="주요 타격 지표 상관관계"
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.divider()
+
+    # 산점도와 회귀선
+    st.subheader("8. 변수 간 관계 분석")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        x_col = st.selectbox(
+            "독립변수",
+            selected_main,
+            index=1 if len(selected_main) > 1 else 0,
+            format_func=korean_name
         )
 
-        fig = px.imshow(
-            corr_display,
-            text_auto=".2f",
-            aspect="auto",
-            color_continuous_scale="RdBu_r",
-            zmin=-1,
-            zmax=1,
-            title="전체 변수 피어슨 상관관계"
+    with col2:
+        y_col = st.selectbox(
+            "종속변수",
+            selected_main,
+            index=0,
+            format_func=korean_name
+        )
+
+    plot_df = df[[x_col, y_col]].copy()
+
+    plot_df[x_col] = pd.to_numeric(
+        plot_df[x_col],
+        errors="coerce"
+    )
+
+    plot_df[y_col] = pd.to_numeric(
+        plot_df[y_col],
+        errors="coerce"
+    )
+
+    plot_df = plot_df.replace(
+        [np.inf, -np.inf],
+        np.nan
+    ).dropna()
+
+    if len(plot_df) >= 2:
+
+        fig = px.scatter(
+            plot_df,
+            x=x_col,
+            y=y_col,
+            trendline="ols",
+            title=f"{korean_name(x_col)}와 {korean_name(y_col)}의 관계"
         )
 
         st.plotly_chart(
@@ -353,332 +407,165 @@ st.caption(
             use_container_width=True
         )
 
-        pairs = corr.where(
-            np.triu(
-                np.ones(corr.shape),
-                k=1
-            ).astype(bool)
-        ).stack().reset_index()
+        correlation = plot_df[x_col].corr(plot_df[y_col])
 
-        pairs.columns = [
-            "항목 1",
-            "항목 2",
-            "상관계수"
-        ]
-
-        pairs["절댓값"] = pairs["상관계수"].abs()
-
-        pairs = pairs.sort_values(
-            "절댓값",
-            ascending=False
+        st.metric(
+            "피어슨 상관계수",
+            f"{correlation:.3f}"
         )
-
-        pairs_display = pairs.drop(
-            columns=["절댓값"]
-        ).copy()
-
-        pairs_display["항목 1"] = (
-            pairs_display["항목 1"].map(korean_name)
-        )
-
-        pairs_display["항목 2"] = (
-            pairs_display["항목 2"].map(korean_name)
-        )
-
-        st.subheader("상관관계가 높은 변수 쌍")
-
-        st.dataframe(
-            pairs_display.round(3),
-            use_container_width=True,
-            hide_index=True
-        )
-
-    # 주요 5개 변수 회귀 분석
-    st.divider()
-    st.subheader("7. 주요 지표 회귀 분석")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        x_col = st.selectbox(
-            "독립변수",
-            MAIN_COLS,
-            index=4,
-            format_func=korean_name
-        )
-
-    with col2:
-        y_col = st.selectbox(
-            "종속변수",
-            MAIN_COLS,
-            index=0,
-            format_func=korean_name
-        )
-
-    if x_col == y_col:
-        st.warning("서로 다른 변수를 선택해 주세요.")
 
     else:
-        reg_data = numeric_df[[x_col, y_col]].dropna()
-
-        if len(reg_data) >= 2:
-
-            x = reg_data[x_col].values
-            y = reg_data[y_col].values
-
-            slope, intercept = np.polyfit(x, y, 1)
-
-            corr_value = np.corrcoef(x, y)[0, 1]
-
-            fig = px.scatter(
-                reg_data,
-                x=x_col,
-                y=y_col,
-                labels={
-                    x_col: korean_name(x_col),
-                    y_col: korean_name(y_col)
-                },
-                title="산점도와 회귀직선"
-            )
-
-            line_x = np.linspace(
-                x.min(),
-                x.max(),
-                100
-            )
-
-            fig.add_trace(
-                go.Scatter(
-                    x=line_x,
-                    y=slope * line_x + intercept,
-                    mode="lines",
-                    name="회귀직선"
-                )
-            )
-
-            st.plotly_chart(
-                fig,
-                use_container_width=True
-            )
-
-            st.write(
-                f"회귀식: Y = {slope:.4f}X + {intercept:.4f}"
-            )
-
-            st.metric(
-                "피어슨 상관계수",
-                f"{corr_value:.4f}"
-            )
+        st.warning("분석할 데이터가 부족합니다.")
 
 
-# =========================================================
-# 메뉴 2. 데이터 전처리
-# =========================================================
+# -----------------------------------
+# 데이터 전처리
+# -----------------------------------
 
 elif menu == "데이터 전처리":
 
-    st.title("🧹 데이터 전처리")
+    st.header("2. 데이터 전처리")
 
-    st.write(
-        "머신러닝 학습에 사용될 데이터를 확인하고 "
-        "결측치와 자료형을 처리합니다."
-    )
+    st.subheader("데이터 자료형")
 
-    st.subheader("1. 전처리 전 데이터")
-
-    st.write(f"전체 행: {len(df)}개")
-    st.write(f"전체 열: {len(df.columns)}개")
+    type_df = pd.DataFrame({
+        "변수": df.columns,
+        "자료형": df.dtypes.astype(str).values,
+        "결측값 수": df.isnull().sum().values
+    })
 
     st.dataframe(
-        df.head(20).rename(columns=korean_name),
+        type_df,
         use_container_width=True
     )
 
     st.divider()
 
-    # 자료형 확인
-    st.subheader("2. 데이터 자료형")
+    st.subheader("분석 변수 선택")
 
-    dtype_df = pd.DataFrame({
-        "변수": df.columns,
-        "자료형": df.dtypes.astype(str).values,
-        "결측치 수": df.isna().sum().values
-    })
-
-    dtype_df["변수"] = dtype_df["변수"].map(korean_name)
-
-    st.dataframe(
-        dtype_df,
-        use_container_width=True,
-        hide_index=True
-    )
-
-    st.divider()
-
-    # 결측치 확인
-    st.subheader("3. 결측치 분석")
-
-    missing_df = pd.DataFrame({
-        "변수": df.columns,
-        "결측치 수": df.isna().sum().values,
-        "결측치 비율(%)": (
-            df.isna().mean().values * 100
-        )
-    })
-
-    missing_df["변수"] = missing_df["변수"].map(korean_name)
-
-    st.dataframe(
-        missing_df.sort_values(
-            "결측치 수",
-            ascending=False
-        ),
-        use_container_width=True,
-        hide_index=True
-    )
-
-    # 주요 분석 변수 설정
-    st.divider()
-    st.subheader("4. 머신러닝 전처리 설정")
-
-    target_col = st.selectbox(
-        "예측할 종속변수",
-        MAIN_COLS,
-        format_func=korean_name,
-        key="prep_target"
-    )
-
-    feature_cols = [
+    available_main = [
         col for col in MAIN_COLS
-        if col != target_col
+        if col in df.columns
     ]
 
-    st.write("독립변수:")
-    st.write(", ".join(korean_name(c) for c in feature_cols))
-
-    st.write("종속변수:")
-    st.write(korean_name(target_col))
-
-    # 숫자형 변환
-    selected_cols = feature_cols + [target_col]
-
-    prepared_df = df[selected_cols].copy()
-
-    for col in selected_cols:
-        prepared_df[col] = pd.to_numeric(
-            prepared_df[col],
-            errors="coerce"
-        )
-
-    prepared_df = prepared_df.replace(
-        [np.inf, -np.inf],
-        np.nan
+    target = st.selectbox(
+        "종속변수",
+        available_main,
+        format_func=korean_name
     )
 
-    before_rows = len(prepared_df)
+    feature_options = [
+        col for col in available_main
+        if col != target
+    ]
 
-    # 결측치 제거
-    prepared_df = prepared_df.dropna()
-
-    after_rows = len(prepared_df)
-
-    removed_rows = before_rows - after_rows
-
-    st.subheader("5. 전처리 결과")
-
-    c1, c2, c3 = st.columns(3)
-
-    c1.metric("전처리 전 행 수", before_rows)
-    c2.metric("전처리 후 행 수", after_rows)
-    c3.metric("제거된 행 수", removed_rows)
-
-    st.write("전처리된 데이터")
-
-    display_prepared = prepared_df.rename(
-        columns=korean_name
+    features = st.multiselect(
+        "독립변수",
+        feature_options,
+        default=feature_options,
+        format_func=korean_name
     )
 
-    st.dataframe(
-        display_prepared,
-        use_container_width=True,
-        hide_index=True
-    )
+    if st.button("데이터 전처리 실행"):
 
-    st.download_button(
-        "📥 전처리 데이터 다운로드",
-        data=prepared_df.to_csv(
-            index=False
-        ).encode("utf-8-sig"),
-        file_name="preprocessed_data.csv",
-        mime="text/csv"
-    )
+        if len(features) == 0:
+            st.error("독립변수를 하나 이상 선택하세요.")
 
-    # 세션에 전처리 데이터 저장
-    st.session_state["prepared_df"] = prepared_df
-    st.session_state["prepared_target"] = target_col
-    st.session_state["prepared_features"] = feature_cols
+        else:
 
-    st.success(
-        "전처리가 완료되었습니다. 모델 학습 메뉴에서 학습을 진행하세요."
-    )
+            selected_cols = [target] + features
+
+            clean_df = df[selected_cols].copy()
+
+            for col in selected_cols:
+                clean_df[col] = pd.to_numeric(
+                    clean_df[col],
+                    errors="coerce"
+                )
+
+            clean_df = clean_df.replace(
+                [np.inf, -np.inf],
+                np.nan
+            )
+
+            before = len(clean_df)
+
+            clean_df = clean_df.dropna()
+
+            after = len(clean_df)
+
+            st.session_state["clean_df"] = clean_df
+            st.session_state["target"] = target
+            st.session_state["features"] = features
+
+            st.success("전처리가 완료되었습니다.")
+
+            c1, c2, c3 = st.columns(3)
+
+            c1.metric("전처리 전 데이터", f"{before}개")
+            c2.metric("전처리 후 데이터", f"{after}개")
+            c3.metric("제거된 데이터", f"{before - after}개")
+
+            st.subheader("전처리 결과")
+
+            st.dataframe(
+                clean_df.rename(
+                    columns={
+                        col: korean_name(col)
+                        for col in clean_df.columns
+                    }
+                ),
+                use_container_width=True
+            )
+
+            st.download_button(
+                "전처리 데이터 다운로드",
+                clean_df.to_csv(
+                    index=False
+                ).encode("utf-8-sig"),
+                "clean_baseball_data.csv",
+                "text/csv"
+            )
 
 
-# =========================================================
-# 메뉴 3. 모델 학습
-# =========================================================
+# -----------------------------------
+# 모델 학습
+# -----------------------------------
 
 elif menu == "모델 학습":
 
-    st.title("🤖 모델 학습")
+    st.header("3. 머신러닝 모델 학습")
 
-    st.write(
-        "전처리된 데이터를 활용하여 머신러닝 모델을 학습합니다."
+    st.info(
+        "다중 선형회귀, 랜덤 포레스트, XGBoost 모델을 이용하여 "
+        "선수의 타격 지표를 예측합니다."
     )
 
-    # 종속변수 선택
-    target_col = st.selectbox(
-        "예측할 종속변수",
-        MAIN_COLS,
-        format_func=korean_name,
-        key="train_target"
-    )
-
-    feature_cols = [
+    available_main = [
         col for col in MAIN_COLS
-        if col != target_col
+        if col in df.columns
     ]
 
-    st.subheader("1. 학습 데이터 구성")
+    target = st.selectbox(
+        "예측할 종속변수",
+        available_main,
+        format_func=korean_name
+    )
 
-    st.write("독립변수:")
-    st.write(", ".join(korean_name(c) for c in feature_cols))
+    feature_options = [
+        col for col in available_main
+        if col != target
+    ]
 
-    st.write("종속변수:")
-    st.write(korean_name(target_col))
+    features = st.multiselect(
+        "학습에 사용할 독립변수",
+        feature_options,
+        default=feature_options,
+        format_func=korean_name
+    )
 
-    # 전처리
-    train_data = df[feature_cols + [target_col]].copy()
-
-    for col in feature_cols + [target_col]:
-        train_data[col] = pd.to_numeric(
-            train_data[col],
-            errors="coerce"
-        )
-
-    train_data = train_data.replace(
-        [np.inf, -np.inf],
-        np.nan
-    ).dropna()
-
-    st.write(f"학습에 사용할 수 있는 데이터: {len(train_data)}개")
-
-    st.divider()
-
-    # 모델 선택
-    st.subheader("2. 머신러닝 모델 선택")
-
-    model_type = st.radio(
-        "학습할 모델",
+    model_name = st.radio(
+        "학습 모델 선택",
         [
             "다중 선형회귀",
             "랜덤 포레스트",
@@ -689,257 +576,243 @@ elif menu == "모델 학습":
 
     st.divider()
 
-    # 학습 데이터 비율
     test_size = st.slider(
-        "테스트 데이터 비율(%)",
-        min_value=10,
-        max_value=40,
-        value=20
+        "테스트 데이터 비율",
+        0.1, 0.4, 0.2, 0.05
     )
 
     random_state = st.number_input(
         "랜덤 시드",
         min_value=0,
-        max_value=10000,
         value=42
     )
 
-    # 모델별 설정
-    if model_type == "랜덤 포레스트":
+    st.subheader("모델 설정")
+
+    if model_name == "랜덤 포레스트":
 
         n_estimators = st.slider(
             "트리 개수",
-            50,
-            500,
-            200
+            50, 500, 100, 50
         )
 
         max_depth = st.slider(
-            "최대 트리 깊이",
-            2,
-            20,
-            8
+            "최대 깊이",
+            2, 20, 5
         )
 
-    elif model_type == "XGBoost":
+    elif model_name == "XGBoost":
 
         n_estimators = st.slider(
-            "학습 반복 횟수",
-            50,
-            500,
-            200
+            "반복 학습 횟수",
+            50, 500, 100, 50
+        )
+
+        max_depth = st.slider(
+            "트리 최대 깊이",
+            2, 10, 3
         )
 
         learning_rate = st.slider(
             "학습률",
-            0.01,
-            0.30,
-            0.05,
-            step=0.01
+            0.01, 0.3, 0.1, 0.01
         )
 
-        max_depth = st.slider(
-            "최대 트리 깊이",
-            2,
-            10,
-            4
-        )
+    if st.button("모델 학습 시작", type="primary"):
 
-    st.divider()
-
-    # 학습 실행
-    if st.button(
-        "🚀 모델 학습 시작",
-        type="primary",
-        use_container_width=True
-    ):
-
-        if len(train_data) < 10:
-            st.error("학습 데이터가 부족합니다.")
+        if len(features) == 0:
+            st.error("독립변수를 하나 이상 선택하세요.")
 
         else:
 
-            X = train_data[feature_cols]
-            y = train_data[target_col]
+            selected_cols = [target] + features
 
-            X_train, X_test, y_train, y_test = train_test_split(
-                X,
-                y,
-                test_size=test_size / 100,
-                random_state=int(random_state)
-            )
+            model_df = df[selected_cols].copy()
 
-            if model_type == "다중 선형회귀":
-
-                model = LinearRegression()
-
-            elif model_type == "랜덤 포레스트":
-
-                model = RandomForestRegressor(
-                    n_estimators=n_estimators,
-                    max_depth=max_depth,
-                    random_state=int(random_state),
-                    n_jobs=-1
+            for col in selected_cols:
+                model_df[col] = pd.to_numeric(
+                    model_df[col],
+                    errors="coerce"
                 )
+
+            model_df = model_df.replace(
+                [np.inf, -np.inf],
+                np.nan
+            ).dropna()
+
+            if len(model_df) < 5:
+                st.error("학습에 사용할 데이터가 부족합니다.")
 
             else:
 
-                model = XGBRegressor(
-                    n_estimators=n_estimators,
-                    learning_rate=learning_rate,
-                    max_depth=max_depth,
-                    random_state=int(random_state),
-                    objective="reg:squarederror",
-                    n_jobs=-1,
-                    verbosity=0
+                X = model_df[features]
+                y = model_df[target]
+
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X,
+                    y,
+                    test_size=test_size,
+                    random_state=int(random_state)
                 )
 
-            with st.spinner("모델을 학습하고 있습니다..."):
+                if model_name == "다중 선형회귀":
 
-                model.fit(
-                    X_train,
-                    y_train
-                )
+                    model = LinearRegression()
 
-                predictions = model.predict(X_test)
+                elif model_name == "랜덤 포레스트":
 
-            # 평가 지표
-            r2 = r2_score(y_test, predictions)
+                    model = RandomForestRegressor(
+                        n_estimators=n_estimators,
+                        max_depth=max_depth,
+                        random_state=int(random_state),
+                        n_jobs=-1
+                    )
 
-            mae = mean_absolute_error(
-                y_test,
-                predictions
-            )
+                else:
 
-            rmse = np.sqrt(
-                mean_squared_error(
+                    model = XGBRegressor(
+                        n_estimators=n_estimators,
+                        max_depth=max_depth,
+                        learning_rate=learning_rate,
+                        random_state=int(random_state),
+                        objective="reg:squarederror",
+                        n_jobs=-1
+                    )
+
+                with st.spinner("모델을 학습하고 있습니다..."):
+
+                    model.fit(X_train, y_train)
+
+                    predictions = model.predict(X_test)
+
+                r2 = r2_score(
                     y_test,
                     predictions
                 )
-            )
 
-            # 결과 저장
-            st.session_state["model_result"] = {
-                "model_name": model_type,
-                "target": target_col,
-                "features": feature_cols,
-                "model": model,
-                "r2": r2,
-                "mae": mae,
-                "rmse": rmse,
-                "actual": y_test.reset_index(drop=True),
-                "predicted": predictions,
-                "train_count": len(X_train),
-                "test_count": len(X_test),
-                "data_count": len(train_data)
-            }
+                mae = mean_absolute_error(
+                    y_test,
+                    predictions
+                )
 
-            st.success(
-                "모델 학습이 완료되었습니다. "
-                "학습 결과 메뉴에서 확인하세요."
-            )
+                rmse = np.sqrt(
+                    mean_squared_error(
+                        y_test,
+                        predictions
+                    )
+                )
 
-            st.metric("결정계수 R²", f"{r2:.4f}")
+                result_df = pd.DataFrame({
+                    "실제값": y_test.values,
+                    "예측값": predictions,
+                    "잔차": y_test.values - predictions
+                })
+
+                st.session_state["model_result"] = {
+                    "model": model,
+                    "model_name": model_name,
+                    "target": target,
+                    "features": features,
+                    "r2": r2,
+                    "mae": mae,
+                    "rmse": rmse,
+                    "result_df": result_df,
+                    "y_test": y_test,
+                    "predictions": predictions
+                }
+
+                st.success("모델 학습이 완료되었습니다!")
+
+                c1, c2, c3 = st.columns(3)
+
+                c1.metric("R² 결정계수", f"{r2:.4f}")
+                c2.metric("MAE 평균 절대 오차", f"{mae:.4f}")
+                c3.metric("RMSE 평균 제곱근 오차", f"{rmse:.4f}")
+
+                st.info(
+                    "자세한 분석 결과는 사이드바의 '학습 결과' 메뉴에서 확인하세요."
+                )
 
 
-# =========================================================
-# 메뉴 4. 학습 결과
-# =========================================================
+# -----------------------------------
+# 학습 결과
+# -----------------------------------
 
 elif menu == "학습 결과":
 
-    st.title("📈 학습 결과")
-
-    st.write(
-        "학습된 모델의 예측 성능과 변수 중요도를 확인합니다."
-    )
+    st.header("4. 모델 학습 결과")
 
     if "model_result" not in st.session_state:
 
         st.warning(
-            "아직 학습된 모델이 없습니다. "
-            "모델 학습 메뉴에서 먼저 학습을 진행하세요."
+            "아직 학습 결과가 없습니다. 먼저 '모델 학습' 메뉴에서 모델을 학습하세요."
         )
 
     else:
 
         result = st.session_state["model_result"]
 
-        model_name = result["model_name"]
         model = result["model"]
+        model_name = result["model_name"]
+        target = result["target"]
+        features = result["features"]
 
-        st.subheader("1. 학습 정보")
+        st.subheader("학습 정보")
 
         c1, c2, c3 = st.columns(3)
 
         c1.metric("사용 모델", model_name)
-        c2.metric("전체 데이터", f"{result['data_count']}개")
-        c3.metric("테스트 데이터", f"{result['test_count']}개")
-
-        st.write(
-            "**독립변수:** "
-            + ", ".join(
-                korean_name(c)
-                for c in result["features"]
-            )
-        )
-
-        st.write(
-            "**종속변수:** "
-            + korean_name(result["target"])
-        )
+        c2.metric("종속변수", korean_name(target))
+        c3.metric("독립변수 수", len(features))
 
         st.divider()
 
-        # 성능 평가
-        st.subheader("2. 모델 성능 평가")
+        st.subheader("1. 모델 성능 평가")
 
         c1, c2, c3 = st.columns(3)
 
         c1.metric(
-            "결정계수 R²",
+            "R² 결정계수",
             f"{result['r2']:.4f}"
         )
 
         c2.metric(
-            "평균 절대 오차 MAE",
+            "MAE 평균 절대 오차",
             f"{result['mae']:.4f}"
         )
 
         c3.metric(
-            "평균 제곱근 오차 RMSE",
+            "RMSE 평균 제곱근 오차",
             f"{result['rmse']:.4f}"
         )
 
         st.caption(
-            "R²는 높을수록 좋으며, MAE와 RMSE는 낮을수록 좋습니다."
+            "R²는 설명력을, MAE와 RMSE는 예측 오차의 크기를 나타냅니다. "
+            "MAE와 RMSE는 낮을수록 좋습니다."
         )
 
         st.divider()
 
-        # 실제값 예측값 비교
-        st.subheader("3. 실제값과 예측값 비교")
+        # 실제값과 예측값
+        st.subheader("2. 실제값과 예측값 비교")
 
-        comparison_df = pd.DataFrame({
-            "실제값": result["actual"],
-            "예측값": result["predicted"]
-        })
+        result_df = result["result_df"]
 
         fig = px.scatter(
-            comparison_df,
+            result_df,
             x="실제값",
             y="예측값",
-            title=f"{model_name} 실제값과 예측값"
+            title="실제값과 예측값 비교"
         )
 
         min_value = min(
-            comparison_df["실제값"].min(),
-            comparison_df["예측값"].min()
+            result_df["실제값"].min(),
+            result_df["예측값"].min()
         )
 
         max_value = max(
-            comparison_df["실제값"].max(),
-            comparison_df["예측값"].max()
+            result_df["실제값"].max(),
+            result_df["예측값"].max()
         )
 
         fig.add_trace(
@@ -959,20 +832,13 @@ elif menu == "학습 결과":
         st.divider()
 
         # 잔차 분석
-        st.subheader("4. 예측 오차 분석")
-
-        residual_df = comparison_df.copy()
-
-        residual_df["오차"] = (
-            residual_df["실제값"]
-            - residual_df["예측값"]
-        )
+        st.subheader("3. 잔차 분포")
 
         fig = px.histogram(
-            residual_df,
-            x="오차",
+            result_df,
+            x="잔차",
             nbins=30,
-            title="예측 오차 분포"
+            title="잔차 히스토그램"
         )
 
         st.plotly_chart(
@@ -982,35 +848,25 @@ elif menu == "학습 결과":
 
         st.divider()
 
-        # 변수 중요도
-        st.subheader("5. 변수 영향력 및 중요도")
+        # 계수 및 변수 중요도
+        st.subheader("4. 변수별 영향력 분석")
 
         if model_name == "다중 선형회귀":
 
-            coefficient_df = pd.DataFrame({
-                "변수": [
-                    korean_name(c)
-                    for c in result["features"]
-                ],
+            importance_df = pd.DataFrame({
+                "변수": features,
                 "회귀계수": model.coef_
             })
 
-            st.dataframe(
-                coefficient_df.round(4),
-                use_container_width=True,
-                hide_index=True
-            )
-
-            st.write(
-                f"회귀식의 절편: {model.intercept_:.4f}"
+            importance_df["변수"] = importance_df["변수"].map(
+                korean_name
             )
 
             fig = px.bar(
-                coefficient_df,
-                x="회귀계수",
-                y="변수",
-                orientation="h",
-                title="다중 선형회귀 회귀계수"
+                importance_df,
+                x="변수",
+                y="회귀계수",
+                title="다중 선형회귀 변수별 회귀계수"
             )
 
             st.plotly_chart(
@@ -1018,24 +874,36 @@ elif menu == "학습 결과":
                 use_container_width=True
             )
 
+            st.dataframe(
+                importance_df,
+                use_container_width=True
+            )
+
+            st.caption(
+                "회귀계수는 다른 변수가 일정할 때 해당 변수가 한 단위 증가하면 "
+                "예측값이 얼마나 변하는지를 나타냅니다."
+            )
+
         else:
 
             importance_df = pd.DataFrame({
-                "변수": [
-                    korean_name(c)
-                    for c in result["features"]
-                ],
+                "변수": features,
                 "중요도": model.feature_importances_
-            }).sort_values(
+            })
+
+            importance_df["변수"] = importance_df["변수"].map(
+                korean_name
+            )
+
+            importance_df = importance_df.sort_values(
                 "중요도",
                 ascending=False
             )
 
             fig = px.bar(
                 importance_df,
-                x="중요도",
-                y="변수",
-                orientation="h",
+                x="변수",
+                y="중요도",
                 title=f"{model_name} 변수 중요도"
             )
 
@@ -1045,33 +913,36 @@ elif menu == "학습 결과":
             )
 
             st.dataframe(
-                importance_df.round(4),
-                use_container_width=True,
-                hide_index=True
+                importance_df,
+                use_container_width=True
+            )
+
+            st.caption(
+                "변수 중요도는 모델이 예측 과정에서 각 변수를 얼마나 활용했는지 나타냅니다. "
+                "인과관계를 의미하지는 않습니다."
             )
 
         st.divider()
 
-        # 결과 다운로드
-        st.subheader("6. 예측 결과 다운로드")
+        # 예측 결과 다운로드
+        st.subheader("5. 예측 결과 다운로드")
+
+        st.dataframe(
+            result_df,
+            use_container_width=True
+        )
 
         st.download_button(
-            "📥 예측 결과 CSV 다운로드",
-            data=comparison_df.to_csv(
+            "예측 결과 CSV 다운로드",
+            result_df.to_csv(
                 index=False
             ).encode("utf-8-sig"),
-            file_name=f"{model_name}_결과.csv",
-            mime="text/csv"
+            "baseball_prediction_results.csv",
+            "text/csv"
         )
 
         if st.button("학습 결과 초기화"):
+
             del st.session_state["model_result"]
+
             st.rerun()
-
-
-# =========================================================
-# 마무리
-# =========================================================
-
-st.sidebar.divider()
-st.sidebar.caption("야구 타격 데이터 분석 프로젝트")
