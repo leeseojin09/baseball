@@ -190,21 +190,43 @@ if menu == "데이터 탐색":
     st.divider()
 
     # 주요 지표
-    st.subheader("2. 주요 타격 지표")
+    
+# 주요 타격 지표
+st.subheader("2. 주요 타격 지표 평균")
 
-    metric_cols = st.columns(5)
+metric_cols = st.columns(5)
 
-    for i, col in enumerate(MAIN_COLS):
-        values = pd.to_numeric(
-            df[col],
-            errors="coerce"
+for i, col in enumerate(MAIN_COLS):
+    values = pd.to_numeric(
+        df[col],
+        errors="coerce"
+    )
+
+    with metric_cols[i]:
+        value = values.mean()
+
+        st.metric(
+            korean_name(col),
+            f"{value:.2f}" if pd.notna(value) else "자료 없음"
         )
 
-        with metric_cols[i]:
-            value = values.mean()
-            st.metric(
-                korean_name(col),
-                f"{value:.2f}" if pd.notna(value) else "자료 없음"
+# 배럴 타구 비율 평균 별도 표시
+barrel_mean = pd.to_numeric(
+    df["brl_percent"],
+    errors="coerce"
+).mean()
+
+st.subheader("⚾ 전체 선수의 평균 배럴 타구 비율")
+
+st.metric(
+    label="평균 배럴 타구 비율",
+    value=f"{barrel_mean:.2f}%" if pd.notna(barrel_mean) else "자료 없음"
+)
+
+st.caption(
+    "전체 선수 데이터의 brl_percent 산술평균입니다."
+)
+
             )
 
     # 기술통계
