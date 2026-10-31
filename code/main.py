@@ -528,50 +528,53 @@ else:
 # 12. 머신러닝 분석
 # =========================================================
 
-st.divider()
 
+# =========================================================
+# 12. 머신러닝 분석
+# =========================================================
+
+st.divider()
 st.header("🤖 머신러닝 분석")
 
 st.write(
-    "다중 선형회귀, 랜덤 포레스트, XGBoost "
-    "세 가지 모델을 활용하여 타격 지표를 예측합니다."
+    "분석 방법을 선택하면 해당 머신러닝 모델을 실행합니다."
 )
 
-st.markdown("""
-- **다중 선형회귀:** 여러 독립변수와 종속변수 사이의 선형 관계를 분석합니다.
-- **랜덤 포레스트:** 여러 의사결정트리의 예측 결과를 결합합니다.
-- **XGBoost:** 이전 모델의 오차를 보완하면서 순차적으로 학습합니다.
-""")
+# 분석 방법 선택
+model_type = st.selectbox(
+    "분석 방법 선택",
+    [
+        "다중 선형회귀",
+        "랜덤 포레스트",
+        "XGBoost"
+    ],
+    key="model_type"
+)
 
-# 예측 대상 변수
+st.subheader(f"📌 {model_type} 분석")
+
+# 종속변수 선택
 target_col = st.selectbox(
-    "예측할 종속변수 선택",
+    "예측할 종속변수",
     MAIN_COLS,
     format_func=korean_name,
     key="ml_target"
 )
 
-# 나머지 네 개 변수로 예측
+# 나머지 4개 변수를 독립변수로 사용
 feature_cols = [
     col for col in MAIN_COLS
     if col != target_col
 ]
 
 st.write("**독립변수:**")
+st.write(", ".join(korean_name(c) for c in feature_cols))
 
-st.write(
-    ", ".join(
-        korean_name(col) for col in feature_cols
-    )
-)
-
-st.write(
-    f"**종속변수:** {korean_name(target_col)}"
-)
+st.write("**종속변수:**", korean_name(target_col))
 
 
 # =========================================================
-# 13. 머신러닝 데이터 전처리
+# 데이터 전처리
 # =========================================================
 
 ml_data = analysis_df[
@@ -584,10 +587,7 @@ ml_data = ml_data.replace(
 ).dropna()
 
 if len(ml_data) < 10:
-
-    st.warning(
-        "머신러닝 분석을 진행하기에는 데이터가 부족합니다."
-    )
+    st.warning("분석에 필요한 데이터가 부족합니다.")
 
 else:
 
@@ -601,28 +601,26 @@ else:
         random_state=42
     )
 
-    st.write(
-        f"전체 데이터: {len(ml_data)}개 | "
-        f"학습 데이터: {len(X_train)}개 | "
-        f"테스트 데이터: {len(X_test)}개"
-    )
-
-
     # =====================================================
-    # 14. 세 가지 모델 학습
+    # 모델 선택 및 학습
     # =====================================================
 
-    models = {
-        "다중 선형회귀": LinearRegression(),
+    if model_type == "다중 선형회귀":
 
-        "랜덤 포레스트": RandomForestRegressor(
+        model = LinearRegression()
+
+    elif model_type == "랜덤 포레스트":
+
+        model = RandomForestRegressor(
             n_estimators=200,
             max_depth=8,
             random_state=42,
             n_jobs=-1
-        ),
+        )
 
-        "XGBoost": XGBRegressor(
+    else:
+
+        model = XGBRegressor(
             n_estimators=200,
             learning_rate=0.05,
             max_depth=4,
@@ -631,155 +629,59 @@ else:
             n_jobs=-1,
             verbosity=0
         )
-    }
 
-    results = []
-    predictions = {}
-    trained_models = {}
+    # 학습
+    model.fit(X_train, y_train)
 
-    for model_name, model in models.items():
-
-        model.fit(
-            X_train,
-            y_train
-        )
-
-        pred = model.predict(X_test)
-
-        r2 = r2_score(y_test, pred)
-        mae = mean_absolute_error(y_test, pred)
-
-        rmse = np.sqrt(
-            mean_squared_error(y_test, pred)
-        )
-
-        results.append({
-            "모델": model_name,
-            "결정계수 R²": r2,
-            "평균 절대 오차 MAE": mae,
-            "평균 제곱근 오차 RMSE": rmse
-        })
-
-        predictions[model_name] = pred
-        trained_models[model_name] = model
-
+    # 예측
+    predictions = model.predict(X_test)
 
     # =====================================================
-    # 15. 모델 성능 비교
+    # 성능 평가
     # =====================================================
 
-    st.subheader("1. 머신러닝 모델 성능 비교")
+    r2 = r2_score(y_test, predictions)
 
-    result_df = pd.DataFrame(results)
-
-    st.dataframe(
-        result_df.round(4),
-        use_container_width=True,
-        hide_index=True
+    mae = mean_absolute_error(
+        y_test,
+        predictions
     )
+
+    rmse = np.sqrt(
+        mean_squared_error(
+            y_test,
+            predictions
+        )
+    )
+
+    st.subheader("1. 모델 성능 평가")
+
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric("결정계수 R²", f"{r2:.4f}")
+    c2.metric("평균 절대 오차 MAE", f"{mae:.4f}")
+    c3.metric("평균 제곱근 오차 RMSE", f"{rmse:.4f}")
 
     st.caption(
-        "R²는 높을수록 좋고, MAE와 RMSE는 낮을수록 좋습니다. "
-        "R²는 음수가 나올 수도 있습니다."
+        "R²는 높을수록 좋고 MAE와 RMSE는 낮을수록 좋습니다."
     )
-
-    # R² 그래프
-    fig = px.bar(
-        result_df,
-        x="모델",
-        y="결정계수 R²",
-        text="결정계수 R²",
-        title="모델별 결정계수 비교"
-    )
-
-    fig.update_traces(
-        texttemplate="%{text:.3f}",
-        textposition="outside"
-    )
-
-    st.plotly_chart(
-        fig,
-        use_container_width=True
-    )
-
-    # MAE 비교
-    fig = px.bar(
-        result_df,
-        x="모델",
-        y="평균 절대 오차 MAE",
-        text="평균 절대 오차 MAE",
-        title="모델별 평균 절대 오차 비교"
-    )
-
-    fig.update_traces(
-        texttemplate="%{text:.3f}",
-        textposition="outside"
-    )
-
-    st.plotly_chart(
-        fig,
-        use_container_width=True
-    )
-
-    # RMSE 비교
-    fig = px.bar(
-        result_df,
-        x="모델",
-        y="평균 제곱근 오차 RMSE",
-        text="평균 제곱근 오차 RMSE",
-        title="모델별 RMSE 비교"
-    )
-
-    fig.update_traces(
-        texttemplate="%{text:.3f}",
-        textposition="outside"
-    )
-
-    st.plotly_chart(
-        fig,
-        use_container_width=True
-    )
-
 
     # =====================================================
-    # 16. 가장 높은 R² 모델
-    # =====================================================
-
-    best_index = result_df["결정계수 R²"].idxmax()
-
-    best_model_name = result_df.loc[
-        best_index,
-        "모델"
-    ]
-
-    st.success(
-        f"결정계수 R² 기준 가장 높은 성능을 보인 모델은 "
-        f"{best_model_name}입니다."
-    )
-
-
-    # =====================================================
-    # 17. 실제값과 예측값 비교
+    # 실제값과 예측값 비교
     # =====================================================
 
     st.subheader("2. 실제값과 예측값 비교")
 
-    selected_model = st.selectbox(
-        "비교할 모델 선택",
-        list(models.keys()),
-        key="prediction_model"
-    )
-
     comparison_df = pd.DataFrame({
         "실제값": y_test.values,
-        "예측값": predictions[selected_model]
+        "예측값": predictions
     })
 
     fig = px.scatter(
         comparison_df,
         x="실제값",
         y="예측값",
-        title=f"{selected_model} 실제값과 예측값 비교"
+        title=f"{model_type} 실제값과 예측값"
     )
 
     min_value = min(
@@ -806,92 +708,106 @@ else:
         use_container_width=True
     )
 
+    # =====================================================
+    # 모델별 추가 분석
+    # =====================================================
+
+    if model_type == "다중 선형회귀":
+
+        st.subheader("3. 회귀계수 분석")
+
+        coefficient_df = pd.DataFrame({
+            "독립변수": [
+                korean_name(c) for c in feature_cols
+            ],
+            "회귀계수": model.coef_
+        })
+
+        st.dataframe(
+            coefficient_df.round(4),
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.write(
+            f"**절편:** {model.intercept_:.4f}"
+        )
+
+        st.info(
+            "회귀계수는 다른 독립변수가 일정하다고 가정할 때 "
+            "각 독립변수가 종속변수 예측값에 갖는 선형 관계를 나타냅니다."
+        )
+
+    elif model_type in ["랜덤 포레스트", "XGBoost"]:
+
+        st.subheader("3. 변수 중요도 분석")
+
+        importance_df = pd.DataFrame({
+            "변수": [
+                korean_name(c) for c in feature_cols
+            ],
+            "중요도": model.feature_importances_
+        }).sort_values(
+            "중요도",
+            ascending=False
+        )
+
+        fig = px.bar(
+            importance_df,
+            x="중요도",
+            y="변수",
+            orientation="h",
+            title=f"{model_type} 변수 중요도"
+        )
+
+        st.plotly_chart(
+            fig,
+            use_container_width=True
+        )
+
+        st.dataframe(
+            importance_df.round(4),
+            use_container_width=True,
+            hide_index=True
+        )
 
     # =====================================================
-    # 18. 변수 중요도
-    # =====================================================
-
-    st.subheader("3. 변수 중요도 분석")
-
-    importance_model_name = st.selectbox(
-        "변수 중요도를 확인할 모델",
-        ["랜덤 포레스트", "XGBoost"],
-        key="importance_model"
-    )
-
-    importance_model = trained_models[
-        importance_model_name
-    ]
-
-    importance_df = pd.DataFrame({
-        "변수": [
-            korean_name(col) for col in feature_cols
-        ],
-        "중요도": importance_model.feature_importances_
-    }).sort_values(
-        "중요도",
-        ascending=False
-    )
-
-    fig = px.bar(
-        importance_df,
-        x="중요도",
-        y="변수",
-        orientation="h",
-        title=f"{importance_model_name} 변수 중요도"
-    )
-
-    st.plotly_chart(
-        fig,
-        use_container_width=True
-    )
-
-    st.dataframe(
-        importance_df.round(4),
-        use_container_width=True,
-        hide_index=True
-    )
-
-
-    # =====================================================
-    # 19. 예측 결과 다운로드
+    # 결과 다운로드
     # =====================================================
 
     st.subheader("4. 예측 결과 다운로드")
 
-    download_df = comparison_df.copy()
-    download_df.insert(
+    result_df = comparison_df.copy()
+
+    result_df.insert(
         0,
-        "모델",
-        selected_model
+        "분석 방법",
+        model_type
     )
 
-    download_df["선수 이름"] = (
-        df.loc[ml_data.index, NAME_COL]
-        .iloc[X_test.index.searchsorted(X_test.index)]
-        .values
-        if False else ""
+    result_df.to_csv(
+        index=False,
+        encoding="utf-8-sig"
     )
-
-    result_csv = download_df.to_csv(
-        index=False
-    ).encode("utf-8-sig")
 
     st.download_button(
         "📥 예측 결과 CSV 다운로드",
-        data=result_csv,
-        file_name="machine_learning_results.csv",
+        data=result_df.to_csv(
+            index=False,
+            encoding="utf-8-sig"
+        ),
+        file_name=f"{model_type}_예측결과.csv",
         mime="text/csv"
     )
 
 
 # =========================================================
-# 20. 마무리
+# 마무리
 # =========================================================
 
 st.divider()
 
 st.caption(
-    "야구 타격 데이터 분석실 | "
-    "데이터 분석 및 머신러닝 기반 타격 지표 탐구"
+    "야구 타격 데이터 분석실 | 데이터 분석 및 머신러닝"
 )
+
