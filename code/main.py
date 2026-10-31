@@ -23,6 +23,29 @@ DATA_URL = "https://raw.githubusercontent.com/leeseojin09/baseball/refs/heads/ma
 
 NAME_COL = "last_name, first_name"
 
+# 영어 열 이름을 한국어로 표시하기 위한 사전
+KOREAN_NAMES = {
+    "last_name, first_name": "선수 이름",
+    "avg_hit_angle": "평균 발사각",
+    "avg_hit_speed": "평균 타구 속도",
+    "avg_distance": "평균 타구 비거리",
+    "brl_percent": "배럴 타구 비율",
+    "player_id": "선수 식별 번호",
+    "year": "연도",
+    "age": "나이",
+    "pa": "타석 수",
+    "bip": "인플레이 타구 수",
+    "balls": "볼 개수",
+    "strikes": "스트라이크 개수",
+    "events": "타격 결과 수"
+}
+
+
+def korean_name(name):
+    """영어 열 이름을 한국어로 변환"""
+    return KOREAN_NAMES.get(name, name.replace("_", " ").capitalize())
+
+
 MAIN_COLS = [
     "avg_hit_angle",
     "avg_hit_speed",
@@ -36,20 +59,12 @@ MAIN_COLS = [
 # =====================================
 @st.cache_data
 def load_data():
-    response = requests.get(
-        DATA_URL,
-        timeout=30
-    )
+    response = requests.get(DATA_URL, timeout=30)
     response.raise_for_status()
 
-    data = pd.read_csv(
-        BytesIO(response.content)
-    )
-
-    # 열 이름 공백 제거
+    data = pd.read_csv(BytesIO(response.content))
     data.columns = data.columns.astype(str).str.strip()
 
-    # 선수 이름 처리
     if NAME_COL in data.columns:
         data[NAME_COL] = data[NAME_COL].fillna("이름 없음")
 
@@ -76,8 +91,13 @@ st.write(
 
 with st.expander("원본 데이터 확인하기", expanded=True):
 
+    # 화면에 표시할 열 이름만 한국어로 변경
+    display_original = df.rename(
+        columns=korean_name
+    )
+
     st.dataframe(
-        df,
+        display_original,
         use_container_width=True,
         height=500
     )
@@ -85,7 +105,7 @@ with st.expander("원본 데이터 확인하기", expanded=True):
     st.download_button(
         "📥 원본 데이터 전체 다운로드",
         data=df.to_csv(index=False).encode("utf-8-sig"),
-        file_name="exit_velocity_original.csv",
+        file_name="야구_타구_원본데이터.csv",
         mime="text/csv"
     )
 
@@ -107,7 +127,6 @@ for col in numeric_df.columns:
         errors="coerce"
     )
 
-    # 실제 숫자형 값이 존재하는 열만 숫자로 변환
     if converted.notna().any():
         numeric_df[col] = converted
 
@@ -123,15 +142,9 @@ available_cols = [
 ]
 
 if not available_cols:
-    st.error(
-        "분석에 필요한 열을 찾을 수 없습니다. "
-        "CSV의 실제 열 이름을 확인해 주세요."
-    )
-
-    st.write("현재 CSV 열 이름:")
-    st.write(list(df.columns))
+    st.error("분석에 필요한 데이터를 찾을 수 없습니다.")
+    st.write("현재 데이터 열 이름:", list(df.columns))
     st.stop()
-
 
 analysis_df = numeric_df.copy()
 
@@ -147,27 +160,27 @@ valid_df = analysis_df.dropna(
 
 col1, col2, col3 = st.columns(3)
 
-col1.metric(
-    "전체 데이터",
-    f"{len(df):,}개"
-)
-
-col2.metric(
-    "분석 가능한 데이터",
-    f"{len(valid_df):,}개"
-)
-
-col3.metric(
-    "전체 열 개수",
-    f"{len(df.columns)}개"
-)
+col1.metric("전체 데이터 개수", f"{len(df):,}개")
+col2.metric("분석 가능한 데이터 개수", f"{len(valid_df):,}개")
+col3.metric("전체 항목 개수", f"{len(df.columns)}개")
 
 st.subheader("기초 통계량")
 
-st.dataframe(
-    valid_df[available_cols].describe().round(2),
-    use_container_width=True
-)
+stats_df = valid_df[available_cols].describe().round(2)
+stats_df = stats_df.rename(columns=korean_name)
+
+stats_df.index = [
+    "데이터 개수",
+    "평균",
+    "표준편차",
+    "최솟값",
+    "1사분위수",
+    "중앙값",
+    "3사분위수",
+    "최댓값"
+]
+
+st.dataframe(stats_df, use_container_width=True)
 
 
 # =====================================
@@ -177,19 +190,19 @@ st.header("👤 3. 선수별 데이터")
 
 if NAME_COL in valid_df.columns:
 
-    display_cols = [
-        NAME_COL
-    ] + available_cols
+    display_cols = [NAME_COL] + available_cols
+
+    player_df = valid_df[display_cols].rename(
+        columns=korean_name
+    )
 
     st.dataframe(
-        valid_df[display_cols],
+        player_df,
         use_container_width=True
     )
 
 else:
-    st.warning(
-        "선수 이름 열을 찾을 수 없습니다."
-    )
+    st.warning("선수 이름 정보를 찾을 수 없습니다.")
 
 
 # =====================================
@@ -199,20 +212,27 @@ st.header("📈 4. 항목별 데이터 분포")
 
 selected_hist = st.selectbox(
     "분포를 확인할 항목",
-    available_cols
+    available_cols,
+    format_func=korean_name
 )
 
 fig_hist = px.histogram(
     valid_df,
     x=selected_hist,
     nbins=20,
-    title=f"{selected_hist} 분포"
+    title=f"{korean_name(selected_hist)} 분포",
+    labels={
+        selected_hist: korean_name(selected_hist),
+        "count": "선수 수"
+    }
 )
 
-st.plotly_chart(
-    fig_hist,
-    use_container_width=True
+fig_hist.update_layout(
+    xaxis_title=korean_name(selected_hist),
+    yaxis_title="선수 수"
 )
+
+st.plotly_chart(fig_hist, use_container_width=True)
 
 
 # =====================================
@@ -223,7 +243,8 @@ st.header("🏆 5. 선수별 순위")
 rank_col = st.selectbox(
     "순위를 확인할 항목",
     available_cols,
-    key="rank"
+    key="rank",
+    format_func=korean_name
 )
 
 rank_df = (
@@ -239,7 +260,11 @@ if NAME_COL in rank_df.columns:
         rank_df,
         x=NAME_COL,
         y=rank_col,
-        title=f"{rank_col} 상위 20개 데이터",
+        title=f"{korean_name(rank_col)} 상위 20명",
+        labels={
+            NAME_COL: "선수 이름",
+            rank_col: korean_name(rank_col)
+        },
         hover_data=available_cols
     )
 
@@ -248,21 +273,25 @@ else:
     fig_rank = px.bar(
         rank_df,
         y=rank_col,
-        title=f"{rank_col} 상위 20개 데이터"
+        title=f"{korean_name(rank_col)} 상위 20개 데이터"
     )
 
-st.plotly_chart(
-    fig_rank,
-    use_container_width=True
+fig_rank.update_layout(
+    xaxis_title="선수 이름",
+    yaxis_title=korean_name(rank_col)
 )
 
-st.dataframe(
-    rank_df[
-        [NAME_COL, rank_col]
-    ] if NAME_COL in rank_df.columns
-    else rank_df[[rank_col]],
-    use_container_width=True
-)
+st.plotly_chart(fig_rank, use_container_width=True)
+
+rank_display = rank_df[
+    [NAME_COL, rank_col]
+].copy() if NAME_COL in rank_df.columns else rank_df[
+    [rank_col]
+].copy()
+
+rank_display = rank_display.rename(columns=korean_name)
+
+st.dataframe(rank_display, use_container_width=True)
 
 
 # =====================================
@@ -270,24 +299,20 @@ st.dataframe(
 # =====================================
 st.header("🔗 6. 원본 데이터 전체 상관관계 분석")
 
-# 숫자형 열 자동 추출
 original_numeric_df = numeric_df.select_dtypes(
     include=["number"]
 ).copy()
 
-# 무한대 값을 결측치로 변경
 original_numeric_df = original_numeric_df.replace(
     [np.inf, -np.inf],
     np.nan
 )
 
-# 모든 값이 결측치인 열 제거
 original_numeric_df = original_numeric_df.dropna(
     axis=1,
     how="all"
 )
 
-# 값이 하나뿐인 열 제거
 original_numeric_df = original_numeric_df.loc[
     :,
     original_numeric_df.nunique(dropna=True) > 1
@@ -300,20 +325,30 @@ if original_numeric_df.shape[1] >= 2:
         f"{len(original_numeric_df.columns)}개"
     )
 
-    # 피어슨 상관계수
     original_corr = original_numeric_df.corr(
         method="pearson"
+    )
+
+    # 히트맵의 항목 이름 한국어로 변경
+    korean_corr = original_corr.rename(
+        index=korean_name,
+        columns=korean_name
     )
 
     st.subheader("전체 상관관계 히트맵")
 
     fig_original_corr = px.imshow(
-        original_corr,
+        korean_corr,
         text_auto=".2f",
         color_continuous_scale="RdBu_r",
         zmin=-1,
         zmax=1,
-        title="원본 데이터 전체 피어슨 상관관계"
+        title="원본 데이터 전체 상관관계"
+    )
+
+    fig_original_corr.update_layout(
+        xaxis_title="분석 항목",
+        yaxis_title="분석 항목"
     )
 
     st.plotly_chart(
@@ -323,12 +358,14 @@ if original_numeric_df.shape[1] >= 2:
 
     st.subheader("전체 상관관계 계수표")
 
+    korean_corr_table = korean_corr.round(3)
+
     st.dataframe(
-        original_corr.round(3),
+        korean_corr_table,
         use_container_width=True
     )
 
-    # 가장 강한 상관관계 계산
+    # 상관관계가 강한 항목 찾기
     corr_pairs = (
         original_corr.abs()
         .where(
@@ -350,8 +387,8 @@ if original_numeric_df.shape[1] >= 2:
         for (col1, col2), abs_value in corr_pairs.items():
 
             result_rows.append({
-                "항목 1": col1,
-                "항목 2": col2,
+                "항목 1": korean_name(col1),
+                "항목 2": korean_name(col2),
                 "상관계수": original_corr.loc[col1, col2],
                 "상관계수 절댓값": abs_value
             })
@@ -367,16 +404,15 @@ if original_numeric_df.shape[1] >= 2:
 
         st.info(
             f"가장 강한 상관관계는 "
-            f"'{strongest['항목 1']}'과 "
-            f"'{strongest['항목 2']}' 사이에서 나타났으며, "
+            f"'{strongest['항목 1]}'과 "
+            f"'{strongest['항목 2]}' 사이에서 나타났으며, "
             f"상관계수는 {strongest['상관계수']:.3f}입니다."
         )
 
 else:
 
     st.warning(
-        "상관관계를 계산할 수 있는 수치형 항목이 "
-        "2개 미만입니다."
+        "상관관계를 계산할 수 있는 수치형 항목이 2개 미만입니다."
     )
 
 
@@ -385,9 +421,7 @@ else:
 # =====================================
 st.header("⚾ 7. 주요 타구 변수 상관관계")
 
-main_numeric_df = valid_df[
-    available_cols
-].dropna()
+main_numeric_df = valid_df[available_cols].dropna()
 
 if len(available_cols) >= 2:
 
@@ -395,8 +429,13 @@ if len(available_cols) >= 2:
         method="pearson"
     )
 
+    korean_main_corr = main_corr.rename(
+        index=korean_name,
+        columns=korean_name
+    )
+
     fig_main_corr = px.imshow(
-        main_corr,
+        korean_main_corr,
         text_auto=".2f",
         color_continuous_scale="RdBu_r",
         zmin=-1,
@@ -404,15 +443,14 @@ if len(available_cols) >= 2:
         title="주요 타구 변수 상관관계"
     )
 
+    fig_main_corr.update_layout(
+        xaxis_title="타구 분석 항목",
+        yaxis_title="타구 분석 항목"
+    )
+
     st.plotly_chart(
         fig_main_corr,
         use_container_width=True
-    )
-
-else:
-
-    st.info(
-        "주요 타구 변수 중 상관관계를 계산할 항목이 부족합니다."
     )
 
 
@@ -434,7 +472,8 @@ with col1:
     x_col = st.selectbox(
         "독립변수 (X)",
         available_cols,
-        index=x_default
+        index=x_default,
+        format_func=korean_name
     )
 
 with col2:
@@ -448,9 +487,9 @@ with col2:
     y_col = st.selectbox(
         "종속변수 (Y)",
         available_cols,
-        index=y_default
+        index=y_default,
+        format_func=korean_name
     )
-
 
 scatter_df = valid_df.dropna(
     subset=[x_col, y_col]
@@ -460,14 +499,13 @@ fig_scatter = px.scatter(
     scatter_df,
     x=x_col,
     y=y_col,
-    hover_name=(
-        NAME_COL
-        if NAME_COL in scatter_df.columns
-        else None
-    ),
-    title=f"{x_col}와 {y_col}의 관계"
+    hover_name=NAME_COL if NAME_COL in scatter_df.columns else None,
+    title=f"{korean_name(x_col)}와 {korean_name(y_col)}의 관계",
+    labels={
+        x_col: korean_name(x_col),
+        y_col: korean_name(y_col)
+    }
 )
-
 
 if (
     len(scatter_df) >= 2
@@ -477,11 +515,7 @@ if (
     x = scatter_df[x_col].to_numpy()
     y = scatter_df[y_col].to_numpy()
 
-    slope, intercept = np.polyfit(
-        x,
-        y,
-        1
-    )
+    slope, intercept = np.polyfit(x, y, 1)
 
     x_line = np.linspace(
         x.min(),
@@ -514,20 +548,22 @@ if (
     )
 
     col2.metric(
-        "결정계수 R²",
+        "결정계수",
         f"{r_squared:.3f}"
     )
 
     st.write(
-        f"회귀식: y = {slope:.3f}x + {intercept:.3f}"
+        f"회귀식: Y = {slope:.3f}X + {intercept:.3f}"
     )
 
 else:
 
-    st.warning(
-        "회귀분석을 수행하기에 데이터가 부족합니다."
-    )
+    st.warning("회귀분석을 수행하기에 데이터가 부족합니다.")
 
+fig_scatter.update_layout(
+    xaxis_title=korean_name(x_col),
+    yaxis_title=korean_name(y_col)
+)
 
 st.plotly_chart(
     fig_scatter,
@@ -536,21 +572,17 @@ st.plotly_chart(
 
 
 # =====================================
-# 분석 데이터 다운로드
+# 데이터 다운로드
 # =====================================
 st.divider()
 
 st.header("📥 9. 분석 결과 다운로드")
 
 st.download_button(
-    "분석 데이터 CSV 다운로드",
-    data=valid_df.to_csv(
-        index=False
-    ).encode("utf-8-sig"),
-    file_name="exit_velocity_analysis.csv",
+    "분석 데이터 다운로드",
+    data=valid_df.to_csv(index=False).encode("utf-8-sig"),
+    file_name="야구_타구_분석데이터.csv",
     mime="text/csv"
 )
 
-st.success(
-    "모든 데이터 분석이 완료되었습니다!"
-)
+st.success("모든 데이터 분석이 완료되었습니다!")
