@@ -353,6 +353,10 @@ else:
 # -----------------------------------
 # 10. 산점도와 선형 추세선
 # -----------------------------------
+
+# -----------------------------------
+# 10. 산점도와 선형 추세선
+# -----------------------------------
 st.subheader("7. 두 변수의 관계 — 산점도")
 
 scatter_col1, scatter_col2 = st.columns(2)
@@ -366,73 +370,70 @@ with scatter_col1:
     )
 
 with scatter_col2:
-    default_y_index = 1 if len(numeric_cols) > 1 else 0
-
     y_col = st.selectbox(
         "Y축 변수",
         options=numeric_cols,
-        index=default_y_index,
+        index=1 if len(numeric_cols) > 1 else 0,
         key="scatter_y"
     )
 
 scatter_df = df[[x_col, y_col]].dropna()
 
 if len(scatter_df) >= 2:
+
+    # 기본 산점도
     fig = px.scatter(
         scatter_df,
         x=x_col,
         y=y_col,
         title=f"{x_col}와 {y_col}의 관계",
-        trendline=(
-            "ols"
-            if x_col != y_col and scatter_df[x_col].nunique() > 1
-            else None
-        ),
-        opacity=0.65,
-        labels={x_col: x_col, y_col: y_col}
+        opacity=0.65
     )
+
+    # 선형 회귀 추세선 직접 계산
+    if x_col != y_col and scatter_df[x_col].nunique() >= 2:
+
+        x = scatter_df[x_col].to_numpy(dtype=float)
+        y = scatter_df[y_col].to_numpy(dtype=float)
+
+        slope, intercept = np.polyfit(x, y, 1)
+
+        x_line = np.linspace(x.min(), x.max(), 100)
+        y_line = slope * x_line + intercept
+
+        # Plotly에 직접 추세선 추가
+        fig.add_scatter(
+            x=x_line,
+            y=y_line,
+            mode="lines",
+            name="선형 회귀 추세선",
+            line=dict(dash="dash", width=3)
+        )
 
     st.plotly_chart(fig, use_container_width=True)
 
     if x_col != y_col:
+
         corr_value = scatter_df[x_col].corr(scatter_df[y_col])
 
-        metric_col1, metric_col2 = st.columns(2)
+        st.metric(
+            "피어슨 상관계수",
+            f"{corr_value:.4f}"
+        )
 
-        with metric_col1:
-            st.metric(
-                "피어슨 상관계수",
-                f"{corr_value:.4f}" if pd.notna(corr_value) else "계산 불가"
-            )
+        st.metric(
+            "분석 데이터 수",
+            f"{len(scatter_df):,}개"
+        )
 
-        with metric_col2:
-            st.metric(
-                "분석에 사용된 데이터",
-                f"{len(scatter_df):,}개"
+        if scatter_df[x_col].nunique() >= 2:
+            r_squared = corr_value ** 2
+
+            st.write("### 선형 회귀 분석 결과")
+            st.write(
+                f"회귀식: y = {slope:.4f}x + {intercept:.4f}"
             )
+            st.write(f"결정계수(R²): {r_squared:.4f}")
+
 else:
-    st.warning("산점도를 그리기 위한 유효한 데이터가 부족합니다.")
-
-
-# -----------------------------------
-# 11. CSV 다운로드
-# -----------------------------------
-st.subheader("8. 분석 데이터 다운로드")
-
-csv_data = df.to_csv(
-    index=False,
-    encoding="utf-8-sig"
-)
-
-st.download_button(
-    label="📥 분석 데이터 CSV 다운로드",
-    data=csv_data,
-    file_name="exit_velocity_analysis.csv",
-    mime="text/csv"
-)
-
-st.success("데이터 분석 화면을 모두 불러왔습니다.")
-
-st.caption(
-    "그래프는 Plotly로 제작되어 확대, 축소, 데이터 확인이 가능합니다."
-)
+    st.warning("산점도를 그리기 위한 데이터가 부족합니다.")
