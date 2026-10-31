@@ -1,8 +1,9 @@
+
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 import requests
+import plotly.express as px
 from io import BytesIO
 
 # -----------------------------------
@@ -22,8 +23,8 @@ DATA_URL = (
 
 st.title("⚾ 야구 타구 데이터 기초 통계 분석실")
 st.caption(
-    "실제 CSV 데이터를 이용해 타구 속도의 분포, "
-    "기초 통계량, 선수별 기록, 변수 간 상관관계를 분석합니다."
+    "실제 CSV 데이터를 이용해 타구 속도, 발사각, 비거리, "
+    "배럴 등 야구 타구 기록을 시각화하고 분석합니다."
 )
 
 
@@ -35,23 +36,17 @@ def load_data():
     response = requests.get(DATA_URL, timeout=30)
     response.raise_for_status()
 
-    # UTF-8 형식으로 CSV 읽기
     df = pd.read_csv(
         BytesIO(response.content),
         encoding="utf-8-sig"
     )
 
-    # 열 이름 앞뒤의 공백 제거
     df.columns = df.columns.astype(str).str.strip()
-
-    # 완전히 비어 있는 열 제거
     df = df.dropna(axis=1, how="all")
 
-    # 숫자로 변환할 수 있는 열만 숫자로 변환
-    # 선수 이름 등 문자 데이터는 그대로 유지
+    # 숫자로 변환할 수 있는 열만 숫자형으로 변환
     for col in df.columns:
         converted = pd.to_numeric(df[col], errors="coerce")
-
         if converted.notna().sum() > 0:
             df[col] = converted
 
@@ -64,14 +59,13 @@ except Exception as e:
     st.error("데이터를 불러오지 못했습니다.")
     st.write("오류 종류:", type(e).__name__)
     st.code(str(e))
-    st.write("확인할 CSV 주소:")
+    st.write("CSV 주소:")
     st.code(DATA_URL)
     st.info(
-        "GitHub CSV 주소와 파일 경로를 확인하고, "
-        "requirements.txt에 requests가 있는지 확인해 주세요."
+        "CSV 주소와 GitHub 파일 경로를 확인하고 "
+        "requirements.txt에 필요한 라이브러리가 있는지 확인해 주세요."
     )
     st.stop()
-
 
 if df.empty:
     st.error("CSV 파일은 읽었지만 데이터가 비어 있습니다.")
@@ -92,10 +86,7 @@ with col2:
     st.metric("전체 변수 수", f"{len(df.columns):,}개")
 
 with col3:
-    st.metric(
-        "결측값 수",
-        f"{int(df.isna().sum().sum()):,}개"
-    )
+    st.metric("결측값 수", f"{int(df.isna().sum().sum()):,}개")
 
 with st.expander("데이터 미리 보기", expanded=True):
     st.dataframe(df.head(10), use_container_width=True)
@@ -106,12 +97,8 @@ with st.expander("전체 열 이름"):
 with st.expander("열별 데이터 유형 및 결측값"):
     info_df = pd.DataFrame({
         "열 이름": df.columns,
-        "데이터 유형": [
-            str(df[col].dtype) for col in df.columns
-        ],
-        "결측값 수": [
-            int(df[col].isna().sum()) for col in df.columns
-        ],
+        "데이터 유형": [str(df[col].dtype) for col in df.columns],
+        "결측값 수": [int(df[col].isna().sum()) for col in df.columns],
         "결측 비율(%)": [
             round(df[col].isna().mean() * 100, 2)
             for col in df.columns
@@ -123,15 +110,10 @@ with st.expander("열별 데이터 유형 및 결측값"):
 # -----------------------------------
 # 4. 숫자형 변수 선택
 # -----------------------------------
-numeric_cols = df.select_dtypes(
-    include="number"
-).columns.tolist()
+numeric_cols = df.select_dtypes(include="number").columns.tolist()
 
 if not numeric_cols:
-    st.error(
-        "분석할 숫자형 변수가 없습니다. "
-        "CSV의 열 이름과 데이터 형식을 확인해 주세요."
-    )
+    st.error("분석할 숫자형 변수가 없습니다. CSV의 데이터 형식을 확인해 주세요.")
     st.stop()
 
 
@@ -158,11 +140,7 @@ if selected_stats:
         "75%": "3사분위수",
         "max": "최댓값"
     })
-
-    st.dataframe(
-        stats.round(3),
-        use_container_width=True
-    )
+    st.dataframe(stats.round(3), use_container_width=True)
 else:
     st.info("통계량을 확인할 변수를 선택해 주세요.")
 
@@ -172,38 +150,35 @@ else:
 # -----------------------------------
 st.subheader("3. 데이터 분포 분석 — 히스토그램")
 
+default_ev = numeric_cols.index("avg_hit_speed") if "avg_hit_speed" in numeric_cols else 0
+
 hist_col = st.selectbox(
     "히스토그램으로 확인할 변수",
     options=numeric_cols,
-    index=(
-        numeric_cols.index("avg_hit_speed")
-        if "avg_hit_speed" in numeric_cols
-        else 0
-    )
+    index=default_ev
 )
 
-hist_data = df[hist_col].dropna()
+hist_data = df[[hist_col]].dropna()
 
-if len(hist_data) > 0:
-    fig, ax = plt.subplots(figsize=(9, 4.5))
-
-    ax.hist(
+if not hist_data.empty:
+    fig = px.histogram(
         hist_data,
-        bins=20,
-        edgecolor="black"
+        x=hist_col,
+        nbins=20,
+        title=f"{hist_col} 분포",
+        labels={hist_col: hist_col, "count": "데이터 개수"},
+        opacity=0.85
     )
-
-    ax.set_title(f"{hist_col} 분포")
-    ax.set_xlabel(hist_col)
-    ax.set_ylabel("데이터 개수")
-    ax.grid(axis="y", alpha=0.3)
-
-    st.pyplot(fig)
-    plt.close(fig)
+    fig.update_layout(
+        xaxis_title=hist_col,
+        yaxis_title="데이터 개수",
+        bargap=0.08
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
     st.write(f"유효 데이터 수: {len(hist_data):,}개")
-    st.write(f"평균: {hist_data.mean():.3f}")
-    st.write(f"중앙값: {hist_data.median():.3f}")
+    st.write(f"평균: {hist_data[hist_col].mean():.3f}")
+    st.write(f"중앙값: {hist_data[hist_col].median():.3f}")
 else:
     st.warning("선택한 변수에 분석할 값이 없습니다.")
 
@@ -216,45 +191,30 @@ st.subheader("4. 이상값과 분포 분석 — 상자그림")
 box_cols = st.multiselect(
     "상자그림으로 비교할 변수",
     options=numeric_cols,
-    default=(
-        ["avg_hit_speed"]
-        if "avg_hit_speed" in numeric_cols
-        else numeric_cols[:1]
-    )
+    default=["avg_hit_speed"] if "avg_hit_speed" in numeric_cols else numeric_cols[:1]
 )
 
 if box_cols:
-    box_data = [
-        df[col].dropna().values
-        for col in box_cols
-    ]
+    box_df = df[box_cols].melt(
+        var_name="변수",
+        value_name="값"
+    ).dropna()
 
-    valid_pairs = [
-        (col, values)
-        for col, values in zip(box_cols, box_data)
-        if len(values) > 0
-    ]
-
-    if valid_pairs:
-        fig, ax = plt.subplots(figsize=(10, 5))
-
-        ax.boxplot(
-            [values for _, values in valid_pairs],
-            tick_labels=[col for col, _ in valid_pairs],
-            showfliers=True
+    if not box_df.empty:
+        fig = px.box(
+            box_df,
+            x="변수",
+            y="값",
+            color="변수",
+            points="outliers",
+            title="변수별 상자그림"
         )
-
-        ax.set_title("변수별 상자그림")
-        ax.set_ylabel("값")
-        ax.tick_params(axis="x", rotation=30)
-        ax.grid(axis="y", alpha=0.3)
-
-        st.pyplot(fig)
-        plt.close(fig)
+        fig.update_layout(showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
 
         st.caption(
-            "상자그림의 점은 일반적인 기준에서 벗어난 "
-            "이상값 후보입니다. 반드시 오류 데이터라는 뜻은 아닙니다."
+            "상자그림의 점은 일반적인 기준에서 벗어난 이상값 후보입니다. "
+            "반드시 오류 데이터라는 뜻은 아닙니다."
         )
     else:
         st.warning("선택한 변수에 분석할 값이 없습니다.")
@@ -267,7 +227,6 @@ else:
 # -----------------------------------
 st.subheader("5. 선수별 기록 순위")
 
-# 선수 이름 열 찾기
 possible_name_cols = [
     "last_name, first_name",
     "player_name",
@@ -277,20 +236,10 @@ possible_name_cols = [
     "선수 이름"
 ]
 
-name_col = next(
-    (col for col in possible_name_cols if col in df.columns),
-    None
-)
+name_col = next((col for col in possible_name_cols if col in df.columns), None)
 
 if name_col is None:
-    st.warning(
-        "선수 이름 열을 자동으로 찾지 못했습니다. "
-        "아래에서 선수 이름 열을 직접 선택할 수 있습니다."
-    )
-
-    text_cols = df.select_dtypes(
-        include=["object", "string"]
-    ).columns.tolist()
+    text_cols = df.select_dtypes(include=["object", "string"]).columns.tolist()
 
     if text_cols:
         name_col = st.selectbox(
@@ -302,11 +251,7 @@ if name_col is not None:
     rank_col = st.selectbox(
         "순위를 확인할 기록",
         options=numeric_cols,
-        index=(
-            numeric_cols.index("avg_hit_speed")
-            if "avg_hit_speed" in numeric_cols
-            else 0
-        )
+        index=default_ev
     )
 
     rank_order = st.radio(
@@ -329,22 +274,14 @@ if name_col is not None:
         rank_df[name_col].astype(str).str.strip() != ""
     ]
 
-    # 같은 선수의 기록이 여러 행이면 평균으로 집계
     rank_df = (
         rank_df.groupby(name_col, as_index=False)[rank_col]
         .mean()
+        .sort_values(rank_col, ascending=(rank_order == "낮은 순"))
+        .head(rank_count)
     )
 
-    rank_df = rank_df.sort_values(
-        rank_col,
-        ascending=(rank_order == "낮은 순")
-    ).head(rank_count)
-
-    rank_df.insert(
-        0,
-        "순위",
-        range(1, len(rank_df) + 1)
-    )
+    rank_df.insert(0, "순위", range(1, len(rank_df) + 1))
 
     st.dataframe(
         rank_df.round(3),
@@ -353,20 +290,19 @@ if name_col is not None:
     )
 
     if not rank_df.empty:
-        fig, ax = plt.subplots(figsize=(10, 5))
+        chart_df = rank_df.sort_values(rank_col, ascending=True)
 
-        ax.barh(
-            rank_df[name_col].astype(str).iloc[::-1],
-            rank_df[rank_col].iloc[::-1]
+        fig = px.bar(
+            chart_df,
+            x=rank_col,
+            y=name_col,
+            orientation="h",
+            title=f"선수별 {rank_col} 순위",
+            labels={rank_col: rank_col, name_col: "선수"},
+            hover_data={"순위": True}
         )
 
-        ax.set_title(f"선수별 {rank_col} 순위")
-        ax.set_xlabel(rank_col)
-        ax.set_ylabel("선수")
-        ax.grid(axis="x", alpha=0.3)
-
-        st.pyplot(fig)
-        plt.close(fig)
+        st.plotly_chart(fig, use_container_width=True)
 else:
     st.info(
         "선수 이름 열이 없어 선수별 순위 기능을 표시할 수 없습니다. "
@@ -389,55 +325,25 @@ if len(corr_cols) >= 2:
     corr_data = df[corr_cols].corr()
 
     st.write("상관계수 행렬")
-    st.dataframe(
-        corr_data.round(3),
-        use_container_width=True
-    )
+    st.dataframe(corr_data.round(3), use_container_width=True)
 
-    fig, ax = plt.subplots(
-        figsize=(
-            max(7, len(corr_cols) * 1.1),
-            max(5, len(corr_cols) * 0.8)
-        )
-    )
-
-    image = ax.imshow(
+    fig = px.imshow(
         corr_data,
-        vmin=-1,
-        vmax=1,
-        aspect="auto"
+        text_auto=".2f",
+        zmin=-1,
+        zmax=1,
+        color_continuous_scale="RdBu_r",
+        aspect="auto",
+        title="변수 간 상관관계 히트맵"
     )
 
-    ax.set_xticks(range(len(corr_cols)))
-    ax.set_yticks(range(len(corr_cols)))
-    ax.set_xticklabels(corr_cols, rotation=45, ha="right")
-    ax.set_yticklabels(corr_cols)
+    fig.update_layout(coloraxis_colorbar_title="상관계수")
 
-    for i in range(len(corr_cols)):
-        for j in range(len(corr_cols)):
-            value = corr_data.iloc[i, j]
-
-            if pd.notna(value):
-                ax.text(
-                    j,
-                    i,
-                    f"{value:.2f}",
-                    ha="center",
-                    va="center",
-                    fontsize=8
-                )
-
-    ax.set_title("상관관계 히트맵")
-    fig.colorbar(image, ax=ax, label="상관계수")
-
-    fig.tight_layout()
-    st.pyplot(fig)
-    plt.close(fig)
+    st.plotly_chart(fig, use_container_width=True)
 
     st.caption(
-        "상관계수는 -1부터 1 사이의 값입니다. "
-        "절댓값이 1에 가까울수록 선형 관계가 강하고, "
-        "0에 가까울수록 선형 관계가 약합니다. "
+        "상관계수는 -1부터 1 사이입니다. 절댓값이 1에 가까울수록 "
+        "선형 관계가 강하고, 0에 가까울수록 선형 관계가 약합니다. "
         "상관관계만으로 인과관계를 판단할 수는 없습니다."
     )
 else:
@@ -445,7 +351,7 @@ else:
 
 
 # -----------------------------------
-# 10. 산점도
+# 10. 산점도와 선형 추세선
 # -----------------------------------
 st.subheader("7. 두 변수의 관계 — 산점도")
 
@@ -455,18 +361,12 @@ with scatter_col1:
     x_col = st.selectbox(
         "X축 변수",
         options=numeric_cols,
-        index=(
-            numeric_cols.index("avg_hit_speed")
-            if "avg_hit_speed" in numeric_cols
-            else 0
-        ),
+        index=default_ev,
         key="scatter_x"
     )
 
 with scatter_col2:
-    default_y_index = (
-        1 if len(numeric_cols) > 1 else 0
-    )
+    default_y_index = 1 if len(numeric_cols) > 1 else 0
 
     y_col = st.selectbox(
         "Y축 변수",
@@ -478,62 +378,31 @@ with scatter_col2:
 scatter_df = df[[x_col, y_col]].dropna()
 
 if len(scatter_df) >= 2:
-    fig, ax = plt.subplots(figsize=(9, 5))
-
-    ax.scatter(
-        scatter_df[x_col],
-        scatter_df[y_col],
-        alpha=0.6
+    fig = px.scatter(
+        scatter_df,
+        x=x_col,
+        y=y_col,
+        title=f"{x_col}와 {y_col}의 관계",
+        trendline=(
+            "ols"
+            if x_col != y_col and scatter_df[x_col].nunique() > 1
+            else None
+        ),
+        opacity=0.65,
+        labels={x_col: x_col, y_col: y_col}
     )
 
-    ax.set_title(f"{x_col}와 {y_col}의 관계")
-    ax.set_xlabel(x_col)
-    ax.set_ylabel(y_col)
-    ax.grid(alpha=0.3)
-
-    # 단순 선형 추세선
-    if (
-        x_col != y_col
-        and scatter_df[x_col].nunique() >= 2
-        and scatter_df[y_col].nunique() >= 2
-    ):
-        slope, intercept = np.polyfit(
-            scatter_df[x_col],
-            scatter_df[y_col],
-            1
-        )
-
-        x_values = np.linspace(
-            scatter_df[x_col].min(),
-            scatter_df[x_col].max(),
-            100
-        )
-
-        ax.plot(
-            x_values,
-            slope * x_values + intercept,
-            linestyle="--",
-            label="선형 추세선"
-        )
-
-        ax.legend()
-
-    st.pyplot(fig)
-    plt.close(fig)
+    st.plotly_chart(fig, use_container_width=True)
 
     if x_col != y_col:
-        corr_value = scatter_df[x_col].corr(
-            scatter_df[y_col]
-        )
+        corr_value = scatter_df[x_col].corr(scatter_df[y_col])
 
         metric_col1, metric_col2 = st.columns(2)
 
         with metric_col1:
             st.metric(
                 "피어슨 상관계수",
-                f"{corr_value:.4f}"
-                if pd.notna(corr_value)
-                else "계산 불가"
+                f"{corr_value:.4f}" if pd.notna(corr_value) else "계산 불가"
             )
 
         with metric_col2:
@@ -542,9 +411,7 @@ if len(scatter_df) >= 2:
                 f"{len(scatter_df):,}개"
             )
 else:
-    st.warning(
-        "산점도를 그리기 위한 유효한 데이터가 부족합니다."
-    )
+    st.warning("산점도를 그리기 위한 유효한 데이터가 부족합니다.")
 
 
 # -----------------------------------
@@ -565,6 +432,7 @@ st.download_button(
 )
 
 st.success("데이터 분석 화면을 모두 불러왔습니다.")
+
 st.caption(
-    "분석 결과는 원본 CSV에 포함된 데이터와 열에 따라 달라집니다."
+    "그래프는 Plotly로 제작되어 확대, 축소, 데이터 확인이 가능합니다."
 )
