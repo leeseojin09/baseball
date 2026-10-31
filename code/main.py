@@ -410,7 +410,6 @@ if original_numeric_df.shape[1] >= 2:
             f"상관계수는 {strongest['상관계수']:.3f}입니다."
         )
 
-        )
 
 else:
 
