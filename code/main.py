@@ -6,43 +6,35 @@ import requests
 import plotly.express as px
 import plotly.graph_objects as go
 
-from io import BytesIO
-
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
-from sklearn.tree import DecisionTreeRegressor
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import (
     mean_squared_error,
     mean_absolute_error,
     r2_score
 )
+from xgboost import XGBRegressor
 
 
-# ==================================================
+# =========================================================
 # 1. 기본 설정
-# ==================================================
+# =========================================================
 
 st.set_page_config(
-    page_title="야구 타구 데이터 분석실",
+    page_title="야구 데이터 분석",
     page_icon="⚾",
     layout="wide"
 )
 
-st.title("⚾ 야구 타구 데이터 분석실")
-st.caption(
-    "야구 타구 데이터를 활용한 선수별 타격 능력 분석 및 머신러닝"
-)
-
 DATA_URL = (
     "https://raw.githubusercontent.com/"
-    "leeseojin09/baseball/refs/heads/main/data/exit_velocity.csv"
+    "leeseojin09/baseball/refs/heads/main/"
+    "data/exit_velocity.csv"
 )
 
 NAME_COL = "last_name, first_name"
 
-# 주요 분석 지표 5개
 MAIN_COLS = [
     "brl_percent",
     "fbld",
@@ -50,11 +42,6 @@ MAIN_COLS = [
     "avg_distance",
     "avg_hit_angle"
 ]
-
-
-# ==================================================
-# 2. 열 이름 한글 번역
-# ==================================================
 
 KOREAN_NAMES = {
     "last_name, first_name": "선수 이름",
@@ -65,7 +52,7 @@ KOREAN_NAMES = {
     "max_hit_speed": "최고 타구 속도",
     "avg_hit_speed": "평균 타구 속도",
     "ev50": "타구 속도 중앙값",
-    "fbld": "FB/LD 비율",
+    "fbld": "뜬공·직선타 비율",
     "gb": "땅볼 비율",
     "max_distance": "최대 타구 비거리",
     "avg_distance": "평균 타구 비거리",
@@ -78,188 +65,140 @@ KOREAN_NAMES = {
 }
 
 
-def korean_name(column):
-    return KOREAN_NAMES.get(column, column)
+def korean_name(col):
+    return KOREAN_NAMES.get(col, col)
 
 
-# ==================================================
-# 3. 데이터 불러오기
-# ==================================================
+# =========================================================
+# 2. 데이터 불러오기
+# =========================================================
 
-@st.cache_data(ttl=3600)
+@st.cache_data
 def load_data():
-
-    response = requests.get(
-        DATA_URL,
-        timeout=30
-    )
-
+    response = requests.get(DATA_URL, timeout=20)
     response.raise_for_status()
 
-    df = pd.read_csv(
-        BytesIO(response.content)
-    )
+    from io import BytesIO
 
-    df.columns = df.columns.str.strip()
+    data = pd.read_csv(BytesIO(response.content))
 
-    # 숫자형 데이터 변환
-    for col in df.columns:
-
-        if col != NAME_COL:
-
-            converted = pd.to_numeric(
-                df[col],
-                errors="coerce"
-            )
-
-            if converted.notna().any():
-                df[col] = converted
-
-    return df
+    return data
 
 
 try:
-
     df = load_data()
 
 except Exception as e:
-
-    st.error(
-        f"데이터를 불러오지 못했습니다: {e}"
-    )
-
+    st.error(f"데이터를 불러오는 중 오류가 발생했습니다: {e}")
     st.stop()
 
 
-# ==================================================
-# 4. 데이터 확인
-# ==================================================
+# =========================================================
+# 3. 제목 및 소개
+# =========================================================
 
-if NAME_COL not in df.columns:
-
-    st.error(
-        "선수 이름 열을 찾을 수 없습니다."
-    )
-
-    st.stop()
-
-
-missing_cols = [
-    col for col in MAIN_COLS
-    if col not in df.columns
-]
-
-if missing_cols:
-
-    st.error(
-        f"분석에 필요한 열이 없습니다: {missing_cols}"
-    )
-
-    st.write(
-        "실제 CSV 열 이름:",
-        df.columns.tolist()
-    )
-
-    st.stop()
-
-
-numeric_df = df.select_dtypes(
-    include="number"
-).copy()
-
-numeric_df = numeric_df.replace(
-    [np.inf, -np.inf],
-    np.nan
-)
-
-st.success(
-    f"데이터 불러오기 완료! "
-    f"총 {len(df):,}개 행, {len(df.columns)}개 열"
-)
-
-
-# ==================================================
-# 5. 전체 데이터 표시
-# ==================================================
-
-st.header("1. 전체 데이터")
+st.title("⚾ 야구 타격 데이터 분석실")
 
 st.write(
-    "원본 CSV에 포함된 모든 선수의 데이터를 확인할 수 있습니다."
+    "메이저리그 타격 데이터를 활용하여 "
+    "배럴 타구 비율, 타구 속도, 발사각, 비거리 등을 분석합니다."
 )
 
-display_df = df.rename(
-    columns=KOREAN_NAMES
-)
+st.divider()
+
+
+# =========================================================
+# 4. 데이터 기본 정보
+# =========================================================
+
+st.header("📊 데이터 기본 정보")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.metric("전체 선수 및 데이터 행 수", f"{len(df):,}개")
+
+with col2:
+    st.metric("전체 변수 수", f"{len(df.columns):,}개")
+
+with col3:
+    st.metric(
+        "분석 가능한 숫자형 변수",
+        f"{len(df.select_dtypes(include=np.number).columns):,}개"
+    )
+
+st.subheader("전체 원본 데이터")
+
+display_df = df.rename(columns=korean_name)
 
 st.dataframe(
     display_df,
     use_container_width=True,
-    height=400
+    hide_index=True
 )
 
+csv_data = df.to_csv(index=False).encode("utf-8-sig")
+
 st.download_button(
-    label="전체 데이터 CSV 다운로드",
-    data=df.to_csv(
-        index=False
-    ).encode("utf-8-sig"),
+    "📥 원본 데이터 CSV 다운로드",
+    data=csv_data,
     file_name="baseball_data.csv",
     mime="text/csv"
 )
 
+st.divider()
 
-# ==================================================
-# 6. 주요 타격 지표
-# ==================================================
 
-st.header("2. 주요 타격 지표 분석")
+# =========================================================
+# 5. 주요 타격 지표 분석
+# =========================================================
 
-st.write(
-    "배럴 타구 비율, FB/LD 비율, "
-    "95마일 이상 타구 비율, 평균 타구 비거리, "
-    "평균 발사각을 분석합니다."
-)
+st.header("⚾ 주요 타격 지표 분석")
 
+missing_cols = [col for col in MAIN_COLS if col not in df.columns]
+
+if missing_cols:
+    st.error(
+        "CSV에 다음 분석 열이 없습니다: "
+        + ", ".join(missing_cols)
+    )
+    st.stop()
+
+
+analysis_df = df.copy()
+
+for col in MAIN_COLS:
+    analysis_df[col] = pd.to_numeric(
+        analysis_df[col],
+        errors="coerce"
+    )
+
+
+# 주요 지표 카드
 metric_cols = st.columns(5)
 
 for i, col in enumerate(MAIN_COLS):
+    value = analysis_df[col].mean()
 
-    values = pd.to_numeric(
-        df[col],
-        errors="coerce"
-    ).dropna()
-
-    if len(values) > 0:
-
-        metric_cols[i].metric(
-            label=korean_name(col),
-            value=f"{values.mean():.2f}"
-        )
-
-    else:
-
-        metric_cols[i].metric(
-            label=korean_name(col),
-            value="데이터 없음"
+    with metric_cols[i]:
+        st.metric(
+            korean_name(col),
+            f"{value:.2f}" if pd.notna(value) else "자료 없음"
         )
 
 
-# ==================================================
-# 7. 통계 요약
-# ==================================================
+# =========================================================
+# 6. 기술통계
+# =========================================================
 
-st.subheader("주요 지표 통계 요약")
+st.subheader("1. 주요 지표 기술통계")
 
-summary = numeric_df[MAIN_COLS].describe().T
+stats_df = analysis_df[MAIN_COLS].describe().T
 
-summary.index = [
-    korean_name(col)
-    for col in summary.index
-]
-
-summary = summary.rename(
+stats_df = stats_df.rename(
+    index=korean_name,
     columns={
-        "count": "데이터 수",
+        "count": "개수",
         "mean": "평균",
         "std": "표준편차",
         "min": "최솟값",
@@ -271,60 +210,45 @@ summary = summary.rename(
 )
 
 st.dataframe(
-    summary.round(2),
+    stats_df.round(3),
     use_container_width=True
 )
 
 
-# ==================================================
-# 8. 항목별 분포 그래프
-# ==================================================
+# =========================================================
+# 7. 히스토그램
+# =========================================================
 
-st.header("3. 주요 지표 분포 분석")
+st.subheader("2. 타격 지표 분포")
 
-selected_metric = st.selectbox(
-    "분포를 확인할 항목을 선택하세요.",
+selected_hist = st.selectbox(
+    "분포를 확인할 지표 선택",
     MAIN_COLS,
     format_func=korean_name
 )
 
-hist_data = pd.to_numeric(
-    df[selected_metric],
-    errors="coerce"
-).dropna()
+hist_data = analysis_df[selected_hist].dropna()
 
-fig_hist = px.histogram(
+fig = px.histogram(
     x=hist_data,
     nbins=30,
-    title=f"{korean_name(selected_metric)} 분포",
-    labels={
-        "x": korean_name(selected_metric),
-        "count": "선수 수"
-    }
+    title=f"{korean_name(selected_hist)} 분포",
+    labels={"x": korean_name(selected_hist), "count": "선수 수"}
 )
 
-fig_hist.update_layout(
-    xaxis_title=korean_name(selected_metric),
-    yaxis_title="선수 수"
-)
-
-st.plotly_chart(
-    fig_hist,
-    use_container_width=True
-)
+st.plotly_chart(fig, use_container_width=True)
 
 
-# ==================================================
-# 9. 선수별 순위
-# ==================================================
+# =========================================================
+# 8. 선수별 순위
+# =========================================================
 
-st.header("4. 선수별 타격 지표 순위")
+st.subheader("3. 선수별 타격 지표 순위")
 
-rank_metric = st.selectbox(
-    "순위를 확인할 항목을 선택하세요.",
+rank_col = st.selectbox(
+    "순위를 확인할 지표",
     MAIN_COLS,
-    format_func=korean_name,
-    key="rank_metric"
+    format_func=korean_name
 )
 
 rank_count = st.slider(
@@ -334,438 +258,538 @@ rank_count = st.slider(
     value=10
 )
 
-rank_df = df[
-    [NAME_COL, rank_metric]
-].copy()
+rank_df = df[[NAME_COL, rank_col]].copy()
 
-rank_df[rank_metric] = pd.to_numeric(
-    rank_df[rank_metric],
+rank_df[rank_col] = pd.to_numeric(
+    rank_df[rank_col],
     errors="coerce"
 )
 
-rank_df = rank_df.dropna()
-
-rank_df = rank_df.sort_values(
-    by=rank_metric,
+rank_df = rank_df.dropna(
+    subset=[rank_col]
+).sort_values(
+    rank_col,
     ascending=False
 ).head(rank_count)
 
 rank_df = rank_df.rename(
     columns={
         NAME_COL: "선수 이름",
-        rank_metric: korean_name(rank_metric)
+        rank_col: korean_name(rank_col)
     }
 )
 
 st.dataframe(
-    rank_df.reset_index(drop=True),
-    use_container_width=True
-)
-
-fig_rank = px.bar(
-    rank_df.sort_values(
-        by=korean_name(rank_metric),
-        ascending=True
-    ),
-    x=korean_name(rank_metric),
-    y="선수 이름",
-    orientation="h",
-    title=f"{korean_name(rank_metric)} 상위 선수",
-    text_auto=".2f"
-)
-
-st.plotly_chart(
-    fig_rank,
-    use_container_width=True
+    rank_df,
+    use_container_width=True,
+    hide_index=True
 )
 
 
-# ==================================================
-# 10. 전체 숫자형 데이터 상관관계 분석
-# ==================================================
+# =========================================================
+# 9. 전체 숫자형 변수 상관관계 분석
+# =========================================================
 
-st.header("5. 전체 숫자형 데이터 상관관계 분석")
+st.divider()
 
-st.write(
-    "원본 데이터의 모든 숫자형 열을 대상으로 "
-    "피어슨 상관계수를 계산합니다."
-)
+st.header("🔍 전체 숫자형 변수 상관관계 분석")
 
-corr_df = numeric_df.dropna(
-    axis=1,
-    how="all"
-)
+numeric_df = df.select_dtypes(
+    include=np.number
+).copy()
 
-corr_df = corr_df.loc[
-    :,
-    corr_df.nunique(dropna=True) > 1
-]
+# 실제 숫자로 변환 가능한 문자열 열도 포함
+for col in df.columns:
+    if col not in numeric_df.columns:
+        converted = pd.to_numeric(
+            df[col],
+            errors="coerce"
+        )
 
-if corr_df.shape[1] >= 2:
+        if converted.notna().any():
+            numeric_df[col] = converted
 
-    corr_matrix = corr_df.corr(
-        method="pearson"
-    )
 
-    korean_corr = corr_matrix.rename(
-        index=korean_name,
-        columns=korean_name
-    )
+if numeric_df.shape[1] >= 2:
 
-    fig_corr = px.imshow(
-        korean_corr,
+    corr_all = numeric_df.corr(method="pearson")
+
+    st.subheader("1. 전체 변수 상관관계 히트맵")
+
+    fig = px.imshow(
+        corr_all,
         text_auto=".2f",
         aspect="auto",
         color_continuous_scale="RdBu_r",
         zmin=-1,
         zmax=1,
-        title="전체 숫자형 데이터 상관관계 히트맵"
-    )
-
-    fig_corr.update_layout(
-        height=750
+        title="전체 숫자형 변수 피어슨 상관관계"
     )
 
     st.plotly_chart(
-        fig_corr,
+        fig,
         use_container_width=True
     )
 
-    upper_triangle = np.triu(
-        np.ones(corr_matrix.shape),
-        k=1
-    ).astype(bool)
+    st.subheader("2. 상관관계 계수표")
 
-    corr_pairs = (
-        corr_matrix.abs()
-        .where(upper_triangle)
-        .stack()
-        .sort_values(ascending=False)
+    corr_display = corr_all.rename(
+        index=korean_name,
+        columns=korean_name
+    )
+
+    st.dataframe(
+        corr_display.round(3),
+        use_container_width=True
+    )
+
+    st.subheader("3. 상관관계가 높은 변수 쌍")
+
+    corr_pairs = corr_all.where(
+        np.triu(
+            np.ones(corr_all.shape),
+            k=1
+        ).astype(bool)
+    ).stack().reset_index()
+
+    corr_pairs.columns = [
+        "항목 1",
+        "항목 2",
+        "상관계수"
+    ]
+
+    corr_pairs["절댓값"] = corr_pairs["상관계수"].abs()
+
+    corr_pairs = corr_pairs.sort_values(
+        "절댓값",
+        ascending=False
+    )
+
+    corr_pairs_display = corr_pairs.drop(
+        columns=["절댓값"]
+    ).copy()
+
+    corr_pairs_display["항목 1"] = (
+        corr_pairs_display["항목 1"].map(korean_name)
+    )
+
+    corr_pairs_display["항목 2"] = (
+        corr_pairs_display["항목 2"].map(korean_name)
+    )
+
+    st.dataframe(
+        corr_pairs_display.round(3),
+        use_container_width=True,
+        hide_index=True
     )
 
     if not corr_pairs.empty:
-
-        pair_rows = []
-
-        for (col1, col2), abs_value in corr_pairs.items():
-
-            pair_rows.append({
-                "항목 1": korean_name(col1),
-                "항목 2": korean_name(col2),
-                "상관계수": corr_matrix.loc[col1, col2],
-                "상관계수 절댓값": abs_value
-            })
-
-        pair_df = pd.DataFrame(pair_rows)
-
-        st.subheader("상관관계가 높은 항목")
-
-        st.dataframe(
-            pair_df.head(15).round(3),
-            use_container_width=True
-        )
-
-        strongest = pair_df.iloc[0]
+        strongest = corr_pairs.iloc[0]
 
         st.info(
             f"가장 강한 상관관계는 "
-            f"'{strongest['항목 1']}'과 "
-            f"'{strongest['항목 2']}' 사이에서 나타났으며, "
+            f"'{korean_name(strongest['항목 1'])}'과 "
+            f"'{korean_name(strongest['항목 2'])}' 사이에서 나타났으며, "
             f"상관계수는 {strongest['상관계수']:.3f}입니다."
         )
 
 else:
-
-    st.warning(
-        "상관관계를 계산할 숫자형 열이 부족합니다."
-    )
+    st.warning("상관관계를 계산할 숫자형 변수가 부족합니다.")
 
 
-# ==================================================
-# 11. 주요 5개 항목 상관관계
-# ==================================================
+# =========================================================
+# 10. 주요 5개 변수 상관관계 분석
+# =========================================================
 
-st.header("6. 주요 5개 지표 상관관계")
+st.divider()
 
-main_corr = numeric_df[MAIN_COLS].corr(
-    method="pearson"
-)
+st.header("📈 주요 5개 타격 지표 상관관계")
 
-main_corr = main_corr.rename(
+corr_main = analysis_df[MAIN_COLS].corr()
+
+corr_main_display = corr_main.rename(
     index=korean_name,
     columns=korean_name
 )
 
-fig_main_corr = px.imshow(
-    main_corr,
+fig = px.imshow(
+    corr_main_display,
     text_auto=".3f",
-    aspect="auto",
     color_continuous_scale="RdBu_r",
     zmin=-1,
     zmax=1,
-    title="주요 5개 지표 상관관계 히트맵"
+    title="주요 타격 지표 피어슨 상관관계"
 )
 
 st.plotly_chart(
-    fig_main_corr,
+    fig,
     use_container_width=True
 )
 
 
-# ==================================================
-# 12. 기존 선형 회귀분석
-# ==================================================
+# =========================================================
+# 11. 직접 계산하는 선형회귀 분석
+# =========================================================
 
-st.header("7. 두 지표 사이의 관계 분석")
+st.divider()
 
-col1, col2 = st.columns(2)
+st.header("📉 주요 타격 지표 선형 관계 분석")
 
-with col1:
+st.write(
+    "두 타격 지표 사이의 관계를 산점도와 회귀직선으로 확인합니다."
+)
 
+reg_col1, reg_col2 = st.columns(2)
+
+with reg_col1:
     x_col = st.selectbox(
-        "독립변수(X축)",
+        "독립변수(X)",
         MAIN_COLS,
-        index=0,
-        format_func=korean_name
+        index=4,
+        format_func=korean_name,
+        key="basic_x"
     )
 
-with col2:
-
+with reg_col2:
     y_col = st.selectbox(
-        "종속변수(Y축)",
+        "종속변수(Y)",
         MAIN_COLS,
-        index=3,
-        format_func=korean_name
+        index=0,
+        format_func=korean_name,
+        key="basic_y"
     )
 
 if x_col == y_col:
-
-    st.warning(
-        "서로 다른 항목을 선택해 주세요."
-    )
+    st.warning("서로 다른 변수를 선택해 주세요.")
 
 else:
+    reg_data = analysis_df[[x_col, y_col]].dropna()
 
-    scatter_df = df[
-        [NAME_COL, x_col, y_col]
-    ].copy()
+    if len(reg_data) >= 2:
+        x = reg_data[x_col].values
+        y = reg_data[y_col].values
 
-    for col in [x_col, y_col]:
+        slope, intercept = np.polyfit(x, y, 1)
 
-        scatter_df[col] = pd.to_numeric(
-            scatter_df[col],
-            errors="coerce"
-        )
+        predicted = slope * x + intercept
 
-    scatter_df = scatter_df.replace(
-        [np.inf, -np.inf],
-        np.nan
-    ).dropna()
+        corr_value = np.corrcoef(x, y)[0, 1]
+        r_squared = corr_value ** 2
 
-    if len(scatter_df) >= 3:
-
-        correlation = scatter_df[x_col].corr(
-            scatter_df[y_col],
-            method="pearson"
-        )
-
-        slope, intercept = np.polyfit(
-            scatter_df[x_col],
-            scatter_df[y_col],
-            1
-        )
-
-        predicted = (
-            slope * scatter_df[x_col] + intercept
-        )
-
-        ss_res = np.sum(
-            (scatter_df[y_col] - predicted) ** 2
-        )
-
-        ss_tot = np.sum(
-            (scatter_df[y_col] - scatter_df[y_col].mean()) ** 2
-        )
-
-        if ss_tot != 0:
-            r_squared = 1 - ss_res / ss_tot
-        else:
-            r_squared = np.nan
-
-        fig_scatter = px.scatter(
-            scatter_df,
+        fig = px.scatter(
+            reg_data,
             x=x_col,
             y=y_col,
-            hover_name=NAME_COL,
-            title=(
-                f"{korean_name(x_col)}와 "
-                f"{korean_name(y_col)}의 관계"
-            ),
             labels={
                 x_col: korean_name(x_col),
                 y_col: korean_name(y_col)
-            }
+            },
+            title="타격 지표 산점도와 회귀직선"
         )
 
-        x_line = np.linspace(
-            scatter_df[x_col].min(),
-            scatter_df[x_col].max(),
+        line_x = np.linspace(
+            x.min(),
+            x.max(),
             100
         )
 
-        y_line = slope * x_line + intercept
+        line_y = slope * line_x + intercept
 
-        fig_scatter.add_trace(
+        fig.add_trace(
             go.Scatter(
-                x=x_line,
-                y=y_line,
+                x=line_x,
+                y=line_y,
                 mode="lines",
-                name="선형 회귀 직선"
+                name="회귀직선"
             )
         )
 
         st.plotly_chart(
-            fig_scatter,
+            fig,
             use_container_width=True
         )
 
         c1, c2, c3 = st.columns(3)
 
-        c1.metric(
-            "피어슨 상관계수",
-            f"{correlation:.3f}"
-        )
-
-        c2.metric(
-            "결정계수 R²",
-            f"{r_squared:.3f}"
-            if not np.isnan(r_squared)
-            else "계산 불가"
-        )
-
-        c3.metric(
-            "분석 데이터 수",
-            f"{len(scatter_df):,}개"
-        )
+        c1.metric("피어슨 상관계수", f"{corr_value:.4f}")
+        c2.metric("결정계수 R²", f"{r_squared:.4f}")
+        c3.metric("분석 데이터 수", f"{len(reg_data)}개")
 
         st.write(
-            f"회귀식: y = {slope:.4f}x + {intercept:.4f}"
-        )
-
-        st.caption(
-            "상관관계가 높다고 해서 인과관계가 있다는 뜻은 아닙니다."
+            f"**회귀식:** "
+            f"Y = {slope:.4f}X + {intercept:.4f}"
         )
 
     else:
-
-        st.warning(
-            "분석에 사용할 수 있는 데이터가 부족합니다."
-        )
+        st.warning("회귀분석에 필요한 데이터가 부족합니다.")
 
 
-# ==================================================
-# 13. 분석 지표 설명
-# ==================================================
+# =========================================================
+# 12. 머신러닝 분석
+# =========================================================
 
-st.header("8. 분석 지표 설명")
+st.divider()
 
-explanations = {
-    "배럴 타구 비율": (
-        "배럴 타구가 전체 타구에서 차지하는 비율입니다. "
-        "배럴은 타구 속도와 발사각이 조합된 질 좋은 타구를 의미합니다."
-    ),
-
-    "FB/LD 비율": (
-        "플라이볼과 라인드라이브 타구의 비율을 나타내는 지표입니다."
-    ),
-
-    "95마일 이상 타구 비율": (
-        "타구 속도가 시속 95마일 이상인 타구가 차지하는 비율입니다."
-    ),
-
-    "평균 타구 비거리": (
-        "타구가 날아간 거리의 평균값입니다. 원본 데이터의 단위는 피트입니다."
-    ),
-
-    "평균 발사각": (
-        "타구가 배트에 맞은 뒤 날아가는 각도의 평균값입니다."
-    )
-}
-
-for name, explanation in explanations.items():
-
-    st.markdown(f"**{name}**")
-    st.write(explanation)
-
-
-# ==================================================
-# 14. 머신러닝 분석
-# ==================================================
-
-st.header("9. 머신러닝 기반 타격 데이터 분석")
+st.header("🤖 머신러닝 분석")
 
 st.write(
-    "선형 회귀, 다중 회귀, 의사결정트리, "
-    "K-평균 군집분석을 이용하여 선수들의 타격 데이터를 분석합니다."
+    "다중 선형회귀, 랜덤 포레스트, XGBoost "
+    "세 가지 모델을 활용하여 타격 지표를 예측합니다."
 )
 
-ml_df = df[
-    [NAME_COL] + MAIN_COLS
+st.markdown("""
+- **다중 선형회귀:** 여러 독립변수와 종속변수 사이의 선형 관계를 분석합니다.
+- **랜덤 포레스트:** 여러 의사결정트리의 예측 결과를 결합합니다.
+- **XGBoost:** 이전 모델의 오차를 보완하면서 순차적으로 학습합니다.
+""")
+
+# 예측 대상 변수
+target_col = st.selectbox(
+    "예측할 종속변수 선택",
+    MAIN_COLS,
+    format_func=korean_name,
+    key="ml_target"
+)
+
+# 나머지 네 개 변수로 예측
+feature_cols = [
+    col for col in MAIN_COLS
+    if col != target_col
+]
+
+st.write("**독립변수:**")
+
+st.write(
+    ", ".join(
+        korean_name(col) for col in feature_cols
+    )
+)
+
+st.write(
+    f"**종속변수:** {korean_name(target_col)}"
+)
+
+
+# =========================================================
+# 13. 머신러닝 데이터 전처리
+# =========================================================
+
+ml_data = analysis_df[
+    feature_cols + [target_col]
 ].copy()
 
-for col in MAIN_COLS:
-
-    ml_df[col] = pd.to_numeric(
-        ml_df[col],
-        errors="coerce"
-    )
-
-ml_df = ml_df.replace(
+ml_data = ml_data.replace(
     [np.inf, -np.inf],
     np.nan
-)
+).dropna()
 
-ml_df = ml_df.dropna(
-    subset=[NAME_COL]
-)
+if len(ml_data) < 10:
 
-ml_method = st.selectbox(
-    "머신러닝 분석 방법을 선택하세요.",
-    [
-        "선형 회귀분석",
-        "다중 회귀분석",
-        "의사결정트리",
-        "K-평균 군집분석"
+    st.warning(
+        "머신러닝 분석을 진행하기에는 데이터가 부족합니다."
+    )
+
+else:
+
+    X = ml_data[feature_cols]
+    y = ml_data[target_col]
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=0.2,
+        random_state=42
+    )
+
+    st.write(
+        f"전체 데이터: {len(ml_data)}개 | "
+        f"학습 데이터: {len(X_train)}개 | "
+        f"테스트 데이터: {len(X_test)}개"
+    )
+
+
+    # =====================================================
+    # 14. 세 가지 모델 학습
+    # =====================================================
+
+    models = {
+        "다중 선형회귀": LinearRegression(),
+
+        "랜덤 포레스트": RandomForestRegressor(
+            n_estimators=200,
+            max_depth=8,
+            random_state=42,
+            n_jobs=-1
+        ),
+
+        "XGBoost": XGBRegressor(
+            n_estimators=200,
+            learning_rate=0.05,
+            max_depth=4,
+            random_state=42,
+            objective="reg:squarederror",
+            n_jobs=-1,
+            verbosity=0
+        )
+    }
+
+    results = []
+    predictions = {}
+    trained_models = {}
+
+    for model_name, model in models.items():
+
+        model.fit(
+            X_train,
+            y_train
+        )
+
+        pred = model.predict(X_test)
+
+        r2 = r2_score(y_test, pred)
+        mae = mean_absolute_error(y_test, pred)
+
+        rmse = np.sqrt(
+            mean_squared_error(y_test, pred)
+        )
+
+        results.append({
+            "모델": model_name,
+            "결정계수 R²": r2,
+            "평균 절대 오차 MAE": mae,
+            "평균 제곱근 오차 RMSE": rmse
+        })
+
+        predictions[model_name] = pred
+        trained_models[model_name] = model
+
+
+    # =====================================================
+    # 15. 모델 성능 비교
+    # =====================================================
+
+    st.subheader("1. 머신러닝 모델 성능 비교")
+
+    result_df = pd.DataFrame(results)
+
+    st.dataframe(
+        result_df.round(4),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    st.caption(
+        "R²는 높을수록 좋고, MAE와 RMSE는 낮을수록 좋습니다. "
+        "R²는 음수가 나올 수도 있습니다."
+    )
+
+    # R² 그래프
+    fig = px.bar(
+        result_df,
+        x="모델",
+        y="결정계수 R²",
+        text="결정계수 R²",
+        title="모델별 결정계수 비교"
+    )
+
+    fig.update_traces(
+        texttemplate="%{text:.3f}",
+        textposition="outside"
+    )
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
+
+    # MAE 비교
+    fig = px.bar(
+        result_df,
+        x="모델",
+        y="평균 절대 오차 MAE",
+        text="평균 절대 오차 MAE",
+        title="모델별 평균 절대 오차 비교"
+    )
+
+    fig.update_traces(
+        texttemplate="%{text:.3f}",
+        textposition="outside"
+    )
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
+
+    # RMSE 비교
+    fig = px.bar(
+        result_df,
+        x="모델",
+        y="평균 제곱근 오차 RMSE",
+        text="평균 제곱근 오차 RMSE",
+        title="모델별 RMSE 비교"
+    )
+
+    fig.update_traces(
+        texttemplate="%{text:.3f}",
+        textposition="outside"
+    )
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
+
+
+    # =====================================================
+    # 16. 가장 높은 R² 모델
+    # =====================================================
+
+    best_index = result_df["결정계수 R²"].idxmax()
+
+    best_model_name = result_df.loc[
+        best_index,
+        "모델"
     ]
-)
+
+    st.success(
+        f"결정계수 R² 기준 가장 높은 성능을 보인 모델은 "
+        f"{best_model_name}입니다."
+    )
 
 
-# ==================================================
-# 공통 예측 결과 시각화 함수
-# ==================================================
+    # =====================================================
+    # 17. 실제값과 예측값 비교
+    # =====================================================
 
-def show_prediction_result(y_test, predictions):
+    st.subheader("2. 실제값과 예측값 비교")
 
-    result = pd.DataFrame({
-        "실제값": np.asarray(y_test),
-        "예측값": np.asarray(predictions)
+    selected_model = st.selectbox(
+        "비교할 모델 선택",
+        list(models.keys()),
+        key="prediction_model"
+    )
+
+    comparison_df = pd.DataFrame({
+        "실제값": y_test.values,
+        "예측값": predictions[selected_model]
     })
 
     fig = px.scatter(
-        result,
+        comparison_df,
         x="실제값",
         y="예측값",
-        title="실제값과 예측값 비교"
+        title=f"{selected_model} 실제값과 예측값 비교"
     )
 
     min_value = min(
-        result["실제값"].min(),
-        result["예측값"].min()
+        comparison_df["실제값"].min(),
+        comparison_df["예측값"].min()
     )
 
     max_value = max(
-        result["실제값"].max(),
-        result["예측값"].max()
+        comparison_df["실제값"].max(),
+        comparison_df["예측값"].max()
     )
 
     fig.add_trace(
@@ -773,7 +797,7 @@ def show_prediction_result(y_test, predictions):
             x=[min_value, max_value],
             y=[min_value, max_value],
             mode="lines",
-            name="완벽한 예측 기준선"
+            name="이상적인 예측선"
         )
     )
 
@@ -783,547 +807,91 @@ def show_prediction_result(y_test, predictions):
     )
 
 
-def show_model_metrics(y_test, predictions):
+    # =====================================================
+    # 18. 변수 중요도
+    # =====================================================
 
-    r2 = r2_score(
-        y_test,
-        predictions
+    st.subheader("3. 변수 중요도 분석")
+
+    importance_model_name = st.selectbox(
+        "변수 중요도를 확인할 모델",
+        ["랜덤 포레스트", "XGBoost"],
+        key="importance_model"
     )
 
-    mae = mean_absolute_error(
-        y_test,
-        predictions
-    )
-
-    rmse = np.sqrt(
-        mean_squared_error(
-            y_test,
-            predictions
-        )
-    )
-
-    c1, c2, c3 = st.columns(3)
-
-    c1.metric(
-        "결정계수 R²",
-        f"{r2:.3f}"
-    )
-
-    c2.metric(
-        "평균 절대 오차",
-        f"{mae:.3f}"
-    )
-
-    c3.metric(
-        "평균 제곱근 오차",
-        f"{rmse:.3f}"
-    )
-
-
-# ==================================================
-# 14-1. 선형 회귀분석
-# ==================================================
-
-if ml_method == "선형 회귀분석":
-
-    st.subheader("선형 회귀분석")
-
-    st.write(
-        "독립변수 1개를 이용하여 종속변수를 예측합니다."
-    )
-
-    x_col = st.selectbox(
-        "독립변수",
-        MAIN_COLS,
-        index=0,
-        format_func=korean_name,
-        key="linear_x"
-    )
-
-    y_col = st.selectbox(
-        "종속변수",
-        MAIN_COLS,
-        index=3,
-        format_func=korean_name,
-        key="linear_y"
-    )
-
-    if x_col == y_col:
-
-        st.warning(
-            "서로 다른 지표를 선택해 주세요."
-        )
-
-    else:
-
-        data = ml_df[
-            [x_col, y_col]
-        ].dropna()
-
-        if len(data) < 10:
-
-            st.warning(
-                "분석할 데이터가 부족합니다."
-            )
-
-        else:
-
-            X = data[[x_col]]
-            y = data[y_col]
-
-            X_train, X_test, y_train, y_test = train_test_split(
-                X,
-                y,
-                test_size=0.2,
-                random_state=42
-            )
-
-            model = LinearRegression()
-
-            model.fit(
-                X_train,
-                y_train
-            )
-
-            predictions = model.predict(
-                X_test
-            )
-
-            show_model_metrics(
-                y_test,
-                predictions
-            )
-
-            st.subheader("회귀식")
-
-            st.write(
-                f"y = {model.coef_[0]:.4f}x "
-                f"+ {model.intercept_:.4f}"
-            )
-
-            show_prediction_result(
-                y_test,
-                predictions
-            )
-
-
-# ==================================================
-# 14-2. 다중 회귀분석
-# ==================================================
-
-elif ml_method == "다중 회귀분석":
-
-    st.subheader("다중 회귀분석")
-
-    st.write(
-        "여러 독립변수를 동시에 활용하여 "
-        "하나의 종속변수를 예측합니다."
-    )
-
-    y_col = st.selectbox(
-        "예측할 종속변수",
-        MAIN_COLS,
-        index=0,
-        format_func=korean_name,
-        key="multiple_y"
-    )
-
-    X_cols = [
-        col for col in MAIN_COLS
-        if col != y_col
+    importance_model = trained_models[
+        importance_model_name
     ]
 
-    data = ml_df[
-        X_cols + [y_col]
-    ].dropna()
-
-    if len(data) < 10:
-
-        st.warning(
-            "분석할 데이터가 부족합니다."
-        )
-
-    else:
-
-        X = data[X_cols]
-        y = data[y_col]
-
-        X_train, X_test, y_train, y_test = train_test_split(
-            X,
-            y,
-            test_size=0.2,
-            random_state=42
-        )
-
-        model = LinearRegression()
-
-        model.fit(
-            X_train,
-            y_train
-        )
-
-        predictions = model.predict(
-            X_test
-        )
-
-        show_model_metrics(
-            y_test,
-            predictions
-        )
-
-        st.subheader("독립변수별 회귀계수")
-
-        coefficient_df = pd.DataFrame({
-            "독립변수": [
-                korean_name(col)
-                for col in X_cols
-            ],
-            "회귀계수": model.coef_
-        })
-
-        st.dataframe(
-            coefficient_df.round(4),
-            use_container_width=True
-        )
-
-        st.write(
-            f"절편: {model.intercept_:.4f}"
-        )
-
-        show_prediction_result(
-            y_test,
-            predictions
-        )
-
-
-# ==================================================
-# 14-3. 의사결정트리
-# ==================================================
-
-elif ml_method == "의사결정트리":
-
-    st.subheader("의사결정트리 분석")
-
-    st.write(
-        "여러 타격 지표를 활용하여 "
-        "특정 타격 지표를 예측하는 모델입니다."
+    importance_df = pd.DataFrame({
+        "변수": [
+            korean_name(col) for col in feature_cols
+        ],
+        "중요도": importance_model.feature_importances_
+    }).sort_values(
+        "중요도",
+        ascending=False
     )
 
-    y_col = st.selectbox(
-        "예측할 지표",
-        MAIN_COLS,
-        index=0,
-        format_func=korean_name,
-        key="tree_y"
+    fig = px.bar(
+        importance_df,
+        x="중요도",
+        y="변수",
+        orientation="h",
+        title=f"{importance_model_name} 변수 중요도"
     )
 
-    X_cols = [
-        col for col in MAIN_COLS
-        if col != y_col
-    ]
-
-    max_depth = st.slider(
-        "의사결정트리 최대 깊이",
-        min_value=1,
-        max_value=10,
-        value=4
+    st.plotly_chart(
+        fig,
+        use_container_width=True
     )
 
-    data = ml_df[
-        X_cols + [y_col]
-    ].dropna()
-
-    if len(data) < 10:
-
-        st.warning(
-            "분석할 데이터가 부족합니다."
-        )
-
-    else:
-
-        X = data[X_cols]
-        y = data[y_col]
-
-        X_train, X_test, y_train, y_test = train_test_split(
-            X,
-            y,
-            test_size=0.2,
-            random_state=42
-        )
-
-        model = DecisionTreeRegressor(
-            max_depth=max_depth,
-            random_state=42
-        )
-
-        model.fit(
-            X_train,
-            y_train
-        )
-
-        predictions = model.predict(
-            X_test
-        )
-
-        show_model_metrics(
-            y_test,
-            predictions
-        )
-
-        st.subheader("변수 중요도")
-
-        importance_df = pd.DataFrame({
-            "변수": [
-                korean_name(col)
-                for col in X_cols
-            ],
-            "중요도": model.feature_importances_
-        })
-
-        importance_df = importance_df.sort_values(
-            "중요도",
-            ascending=False
-        )
-
-        st.dataframe(
-            importance_df.round(4),
-            use_container_width=True
-        )
-
-        fig_importance = px.bar(
-            importance_df,
-            x="중요도",
-            y="변수",
-            orientation="h",
-            title="의사결정트리 변수 중요도"
-        )
-
-        st.plotly_chart(
-            fig_importance,
-            use_container_width=True
-        )
-
-        show_prediction_result(
-            y_test,
-            predictions
-        )
-
-
-# ==================================================
-# 14-4. K-평균 군집분석
-# ==================================================
-
-elif ml_method == "K-평균 군집분석":
-
-    st.subheader("K-평균 군집분석")
-
-    st.write(
-        "5개 타격 지표를 이용하여 "
-        "비슷한 타격 특성을 가진 선수들을 그룹으로 분류합니다."
+    st.dataframe(
+        importance_df.round(4),
+        use_container_width=True,
+        hide_index=True
     )
 
-    k = st.slider(
-        "군집 수(K)",
-        min_value=2,
-        max_value=8,
-        value=3
+
+    # =====================================================
+    # 19. 예측 결과 다운로드
+    # =====================================================
+
+    st.subheader("4. 예측 결과 다운로드")
+
+    download_df = comparison_df.copy()
+    download_df.insert(
+        0,
+        "모델",
+        selected_model
     )
 
-    cluster_data = ml_df[
-        [NAME_COL] + MAIN_COLS
-    ].copy()
-
-    cluster_data[MAIN_COLS] = (
-        cluster_data[MAIN_COLS]
-        .replace(
-            [np.inf, -np.inf],
-            np.nan
-        )
+    download_df["선수 이름"] = (
+        df.loc[ml_data.index, NAME_COL]
+        .iloc[X_test.index.searchsorted(X_test.index)]
+        .values
+        if False else ""
     )
 
-    cluster_data = cluster_data.dropna(
-        subset=MAIN_COLS
+    result_csv = download_df.to_csv(
+        index=False
+    ).encode("utf-8-sig")
+
+    st.download_button(
+        "📥 예측 결과 CSV 다운로드",
+        data=result_csv,
+        file_name="machine_learning_results.csv",
+        mime="text/csv"
     )
 
-    if len(cluster_data) < k:
 
-        st.warning(
-            "선택한 군집 수보다 데이터가 적습니다."
-        )
-
-    else:
-
-        # 데이터 표준화
-        scaler = StandardScaler()
-
-        scaled_data = scaler.fit_transform(
-            cluster_data[MAIN_COLS]
-        )
-
-        # K-평균 군집 모델
-        kmeans = KMeans(
-            n_clusters=k,
-            random_state=42,
-            n_init=10
-        )
-
-        cluster_labels = kmeans.fit_predict(
-            scaled_data
-        )
-
-        cluster_data["군집"] = [
-            f"군집 {label + 1}"
-            for label in cluster_labels
-        ]
-
-        st.success(
-            f"{len(cluster_data):,}명의 선수를 "
-            f"{k}개 군집으로 분류했습니다."
-        )
-
-        st.metric(
-            "군집화 관성값(Inertia)",
-            f"{kmeans.inertia_:.2f}"
-        )
-
-        st.caption(
-            "관성값은 각 데이터와 소속 군집 중심 사이의 "
-            "거리 제곱 합입니다. 일반적으로 군집 수가 늘면 감소합니다."
-        )
-
-        # 군집별 선수 수
-        st.subheader("군집별 선수 수")
-
-        cluster_counts = (
-            cluster_data["군집"]
-            .value_counts()
-            .rename_axis("군집")
-            .reset_index(name="선수 수")
-        )
-
-        st.dataframe(
-            cluster_counts,
-            use_container_width=True
-        )
-
-        fig_count = px.bar(
-            cluster_counts,
-            x="군집",
-            y="선수 수",
-            title="군집별 선수 수"
-        )
-
-        st.plotly_chart(
-            fig_count,
-            use_container_width=True
-        )
-
-        # 군집별 지표 평균
-        st.subheader("군집별 타격 지표 평균")
-
-        cluster_mean = (
-            cluster_data.groupby("군집")[MAIN_COLS]
-            .mean()
-        )
-
-        cluster_mean = cluster_mean.rename(
-            columns=korean_name
-        )
-
-        st.dataframe(
-            cluster_mean.round(2),
-            use_container_width=True
-        )
-
-        # 군집별 산점도
-        st.subheader("군집별 선수 분포")
-
-        col_x, col_y = st.columns(2)
-
-        with col_x:
-
-            cluster_x = st.selectbox(
-                "X축",
-                MAIN_COLS,
-                index=0,
-                format_func=korean_name,
-                key="cluster_x"
-            )
-
-        with col_y:
-
-            cluster_y = st.selectbox(
-                "Y축",
-                MAIN_COLS,
-                index=3,
-                format_func=korean_name,
-                key="cluster_y"
-            )
-
-        fig_cluster = px.scatter(
-            cluster_data,
-            x=cluster_x,
-            y=cluster_y,
-            color="군집",
-            hover_name=NAME_COL,
-            title="K-평균 군집별 타격 유형",
-            labels={
-                cluster_x: korean_name(cluster_x),
-                cluster_y: korean_name(cluster_y)
-            }
-        )
-
-        st.plotly_chart(
-            fig_cluster,
-            use_container_width=True
-        )
-
-        # 선수별 군집 결과
-        st.subheader("선수별 군집 분류 결과")
-
-        result_cluster = cluster_data[
-            [NAME_COL] + MAIN_COLS + ["군집"]
-        ].rename(
-            columns={
-                NAME_COL: "선수 이름",
-                **{
-                    col: korean_name(col)
-                    for col in MAIN_COLS
-                }
-            }
-        )
-
-        st.dataframe(
-            result_cluster,
-            use_container_width=True
-        )
-
-        st.download_button(
-            "군집 분석 결과 CSV 다운로드",
-            data=result_cluster.to_csv(
-                index=False
-            ).encode("utf-8-sig"),
-            file_name="baseball_cluster_result.csv",
-            mime="text/csv"
-        )
-
-
-# ==================================================
-# 15. 하단 안내
-# ==================================================
+# =========================================================
+# 20. 마무리
+# =========================================================
 
 st.divider()
 
 st.caption(
-    "데이터 출처: GitHub exit_velocity.csv"
-)
-
-st.caption(
-    "분석 방법: 기술통계, 피어슨 상관분석, "
-    "선형 회귀, 다중 회귀, 의사결정트리, K-평균 군집분석"
-)
-
-st.caption(
-    "본 앱은 데이터 분석 학습을 위한 도구입니다. "
-    "상관관계가 인과관계를 의미하지는 않습니다."
+    "야구 타격 데이터 분석실 | "
+    "데이터 분석 및 머신러닝 기반 타격 지표 탐구"
 )
