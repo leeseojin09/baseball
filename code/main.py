@@ -402,11 +402,14 @@ if original_numeric_df.shape[1] >= 2:
 
         strongest = result_df.iloc[0]
 
+       
         st.info(
             f"가장 강한 상관관계는 "
-            f"'{strongest['항목 1]}'과 "
-            f"'{strongest['항목 2]}' 사이에서 나타났으며, "
+            f"'{strongest['항목 1']}'과 "
+            f"'{strongest['항목 2']}' 사이에서 나타났으며, "
             f"상관계수는 {strongest['상관계수']:.3f}입니다."
+        )
+
         )
 
 else:
