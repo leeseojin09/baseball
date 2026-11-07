@@ -106,7 +106,8 @@ menu = st.sidebar.radio(
         "데이터 탐색",
         "데이터 전처리",
         "모델 학습",
-        "학습 결과"
+        "학습 결과",
+        "보고서 작성"
     ]
 )
 
@@ -174,7 +175,7 @@ if menu == "데이터 탐색":
                         f"{value:.2f}" if pd.notna(value) else "자료 없음"
                     )
 
-    # 배럴 타구 평균 추가
+    # 배럴 타구 평균
     st.subheader("⚾ 배럴 타구 평균")
 
     barrel_cols = st.columns(2)
@@ -301,14 +302,16 @@ if menu == "데이터 탐색":
             .str.strip()
         )
 
+    ranking_display = ranking[
+        [NAME_COL, rank_col]
+        if NAME_COL in ranking.columns
+        else [rank_col]
+    ].rename(
+        columns={col: korean_name(col) for col in ranking.columns}
+    )
+
     st.dataframe(
-        ranking[
-            [NAME_COL, rank_col]
-            if NAME_COL in ranking.columns
-            else [rank_col]
-        ].rename(
-            columns={col: korean_name(col) for col in ranking.columns}
-        ),
+        ranking_display,
         use_container_width=True
     )
 
@@ -946,3 +949,118 @@ elif menu == "학습 결과":
             del st.session_state["model_result"]
 
             st.rerun()
+
+
+# -----------------------------------
+# 보고서 작성
+# -----------------------------------
+
+elif menu == "보고서 작성":
+
+    st.header("5. 데이터 분석 보고서 작성")
+    st.caption("문제 정의부터 느낀 점까지 작성하고 보고서 파일로 저장할 수 있습니다.")
+
+    # 데이터에서 기준선 자동 계산
+    if "brl_percent" in df.columns:
+
+        barrel_values = pd.to_numeric(
+            df["brl_percent"],
+            errors="coerce"
+        ).dropna()
+
+        barrel_mean = barrel_values.mean()
+
+        if pd.notna(barrel_mean):
+
+            if abs(barrel_mean) <= 1:
+                baseline_display = barrel_mean * 100
+            else:
+                baseline_display = barrel_mean
+
+            baseline_text = (
+                f"전체 {len(barrel_values)}명의 선수 데이터를 기준으로 배럴 타구 비율("
+                f"brl_percent)의 평균을 계산한 결과 약 {baseline_display:.2f}%로 나타났다. "
+                "이 값을 기준선으로 설정하여 선수별 배럴 타구 비율과 모델의 예측 결과를 비교한다."
+            )
+
+        else:
+            baseline_text = "brl_percent 데이터의 평균을 계산할 수 없습니다."
+
+    else:
+        baseline_text = "데이터에 brl_percent 열이 없어 기준선을 계산할 수 없습니다."
+
+    # 모델 평가 결과 자동 반영
+    if "model_result" in st.session_state:
+
+        saved_result = st.session_state["model_result"]
+
+        metric_text = (
+            f"사용 모델: {saved_result['model_name']}\n"
+            f"종속변수: {korean_name(saved_result['target'])}\n"
+            f"R²(결정계수): {saved_result['r2']:.4f}\n"
+            f"MAE(평균 절대 오차): {saved_result['mae']:.4f}\n"
+            f"RMSE(평균 제곱근 오차): {saved_result['rmse']:.4f}\n\n"
+            "R²는 모델의 설명력을 나타내며 1에 가까울수록 설명력이 높다. "
+            "MAE와 RMSE는 실제값과 예측값의 오차 크기를 나타내며 낮을수록 좋다. "
+            "RMSE는 큰 오차에 더 큰 영향을 받는다. 위의 수치를 함께 살펴 모델의 예측 성능을 판단한다."
+        )
+
+    else:
+
+        metric_text = (
+            "아직 모델 학습 결과가 없습니다. 모델 학습 메뉴에서 모델을 실행한 뒤 돌아오면 "
+            "R², MAE, RMSE가 자동으로 표시됩니다.\n\n"
+            "R²는 모델의 설명력을 나타내며 1에 가까울수록 설명력이 높다. "
+            "MAE와 RMSE는 예측 오차의 크기를 나타내며 낮을수록 좋다."
+        )
+
+    problem = st.text_area(
+        "① 문제 정의",
+        value=(
+            "야구 선수들의 타격 능력은 여러 요인의 영향을 받는다. "
+            "평균 발사각, 평균 타구 비거리, 뜬공·직선타 비율 등의 타격 지표가 "
+            "배럴 타구 비율과 어떤 관계가 있는지 분석하고, 머신러닝을 활용해 "
+            "타격 지표를 예측하고자 한다."
+        ),
+        height=130
+    )
+
+    baseline = st.text_area(
+        "② 기준선",
+        value=baseline_text,
+        height=110
+    )
+
+    metric_interpretation = st.text_area(
+        "③ 평가지표 해석",
+        value=metric_text,
+        height=190
+    )
+
+    facts = st.text_area(
+        "④ 평가 지표를 바탕으로 데이터에서 알게 된 사실",
+        placeholder="분석 결과에서 확인한 수치, 변수 간 관계, 모델별 차이 등을 작성하세요.",
+        height=140
+    )
+
+    reflection = st.text_area(
+        "⑤ 느낀 점",
+        placeholder="데이터 분석과 머신러닝을 진행하며 새롭게 알게 된 점과 어려웠던 점을 작성하세요.",
+        height=140
+    )
+
+    report_text = (
+        "야구 타구 데이터 분석 보고서\n\n"
+        f"[문제 정의]\n{problem}\n\n"
+        f"[기준선]\n{baseline}\n\n"
+        f"[평가지표 해석]\n{metric_interpretation}\n\n"
+        f"[알게 된 사실]\n{facts}\n\n"
+        f"[느낀 점]\n{reflection}\n"
+    )
+
+    st.download_button(
+        "보고서 TXT 다운로드",
+        data=report_text.encode("utf-8-sig"),
+        file_name="야구_타구_데이터_분석_보고서.txt",
+        mime="text/plain"
+    )
